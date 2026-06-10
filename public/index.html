@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Website → Markdown</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <!-- marked.js: renders raw Markdown to HTML for the Preview tab -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- =====================================================================
+       Header
+  ====================================================================== -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon" aria-hidden="true">⬇</span>
+        <span class="logo-text">Web<span class="logo-accent">→</span>MD</span>
+      </div>
+      <p class="header-tagline">Convert any webpage to clean, readable Markdown</p>
+    </div>
+  </header>
+
+  <!-- =====================================================================
+       Main content
+  ====================================================================== -->
+  <main class="app-main">
+
+    <!-- URL Input card -->
+    <section class="card input-card" aria-label="URL input">
+      <form id="convert-form" autocomplete="off">
+        <div class="input-row">
+          <label for="url-input" class="sr-only">Webpage URL</label>
+          <div class="input-wrapper">
+            <span class="input-icon" aria-hidden="true">🔗</span>
+            <input
+              id="url-input"
+              type="url"
+              name="url"
+              placeholder="https://example.com/article"
+              required
+              spellcheck="false"
+              autocomplete="off"
+            />
+          </div>
+          <button type="submit" id="convert-btn" class="btn btn-primary">
+            <span class="btn-label">Convert</span>
+            <span class="btn-spinner" aria-hidden="true" hidden></span>
+          </button>
+        </div>
+        <p class="input-hint">Paste any URL — JavaScript-heavy pages are fully supported.</p>
+      </form>
+    </section>
+
+    <!-- Status / error banner (hidden until needed) -->
+    <div id="status-banner" class="status-banner" role="alert" aria-live="polite" hidden>
+      <span id="status-icon" class="status-icon" aria-hidden="true"></span>
+      <span id="status-message"></span>
+    </div>
+
+    <!-- Output card (hidden until a conversion succeeds) -->
+    <section id="output-card" class="card output-card" aria-label="Conversion output" hidden>
+
+      <!-- Meta row: title + action buttons -->
+      <div class="output-header">
+        <div class="output-meta">
+          <h2 id="output-title" class="output-title"></h2>
+          <a id="output-source-link" class="output-source" href="#" target="_blank" rel="noopener noreferrer"></a>
+        </div>
+        <div class="output-actions">
+          <button id="copy-btn" class="btn btn-secondary" title="Copy Markdown to clipboard">
+            <span class="btn-icon" aria-hidden="true">📋</span>
+            Copy
+          </button>
+          <button id="download-btn" class="btn btn-secondary" title="Save as .md file">
+            <span class="btn-icon" aria-hidden="true">💾</span>
+            Save as .md
+          </button>
+        </div>
+      </div>
+
+      <!-- Tab switcher -->
+      <div class="tabs" role="tablist" aria-label="View mode">
+        <button
+          id="tab-source"
+          class="tab tab-active"
+          role="tab"
+          aria-selected="true"
+          aria-controls="panel-source"
+        >Source</button>
+        <button
+          id="tab-preview"
+          class="tab"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-preview"
+        >Preview</button>
+      </div>
+
+      <!-- Source panel -->
+      <div id="panel-source" class="panel" role="tabpanel" aria-labelledby="tab-source">
+        <pre id="markdown-output" class="markdown-source" tabindex="0" aria-label="Markdown source"></pre>
+      </div>
+
+      <!-- Preview panel (rendered HTML from Markdown) -->
+      <div id="panel-preview" class="panel panel-hidden" role="tabpanel" aria-labelledby="tab-preview">
+        <div id="markdown-preview" class="markdown-preview prose"></div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- =====================================================================
+       Footer
+  ====================================================================== -->
+  <footer class="app-footer">
+    <p>Runs locally &bull; No data sent to any server &bull; Powered by Playwright + Readability + Turndown</p>
+  </footer>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
