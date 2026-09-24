@@ -1,127 +1,58 @@
-# Website → Markdown Converter
+# Website → Markdown
 
-A local web application that converts any webpage to clean, readable Markdown.
-Paste a URL, get back a well-structured `.md` file — including JavaScript-heavy pages.
+Convert one public web page into editable Markdown. The web app and CLI share a Playwright → Readability → Turndown pipeline. Choose the main article or the full page, inspect the result, then copy or save it.
 
----
+![Web app with editable Markdown output](docs/screenshot.png)
 
-## Features
+## Quick start
 
-- **Full JS rendering** — uses a headless Chromium browser (Playwright), so single-page apps, lazy-loaded content, and client-rendered pages all work correctly.
-- **Smart content extraction** — Mozilla Readability strips navigation, ads, footers, and sidebars (the same technology behind Firefox's Reader Mode), leaving only the meaningful article content.
-- **GitHub-Flavoured Markdown** — tables, strikethrough, and task lists are preserved.
-- **YAML front matter** — every output file includes `title`, `source`, and `date` metadata at the top, making saved files self-documenting.
-- **Source + Preview tabs** — switch between the raw Markdown and a rendered preview in the browser.
-- **Save with folder picker** — the native OS "Save As" dialog lets you choose exactly where the `.md` file lands.
-- **Copy to clipboard** — one click copies the full Markdown.
+Requires Node.js 20+ and Playwright Chromium.
 
----
-
-## Requirements
-
-- [Node.js](https://nodejs.org/) v18 or later
-- An internet connection (for fetching pages)
-
----
-
-## Setup
-
-```bash
-# 1. Install Node dependencies
-npm install
-
-# 2. Install the Playwright Chromium browser (~130 MB, one-time)
+```sh
+npm ci
 npm run install:browser
-
-# 3. Start the server
 npm start
 ```
 
-Then open **http://localhost:3000** in your browser.
+Open <http://localhost:3000>. Paste a public `http://` or `https://` URL, choose **Article only** or **Full page**, and decide whether to include front matter. Edit the Markdown in the Source tab before copying or saving. The Preview tab uses a small escaping renderer; the saved Markdown is the editable source.
 
-> **Tip:** Use `npm run dev` instead of `npm start` during development — it restarts the server automatically on file changes (requires Node 18+).
+## CLI
 
----
-
-## Usage
-
-1. Paste a full URL (including `https://`) into the input field.
-2. Click **Convert** and wait a few seconds while the page loads and converts.
-3. Switch between **Source** (raw Markdown) and **Preview** (rendered) tabs.
-4. Click **Copy** to copy the Markdown to your clipboard, or **Save as .md** to download the file with a folder picker.
-
----
-
-## Project Structure
-
-```
-website_to_md_converter/
-├── src/
-│   ├── server.js       — Express HTTP server and API routing
-│   └── converter.js    — Core conversion pipeline (Playwright → Readability → Turndown)
-├── public/
-│   ├── index.html      — Single-page application shell
-│   ├── styles.css      — All styling (CSS custom properties, dark theme)
-│   └── app.js          — Frontend logic (form, tabs, copy, save)
-└── package.json
+```sh
+node src/cli.js https://example.com/article --output article.md
+node src/cli.js https://example.com/docs --full --no-front-matter > docs.md
 ```
 
----
+`--output` refuses to overwrite an existing file. Without it, Markdown goes to stdout. Errors go to stderr with a nonzero exit code.
 
-## How It Works
+## Architecture
 
-### Conversion pipeline
+The Express app serves a static frontend and `POST /api/convert`. Both it and the CLI call `convertUrlToMarkdown`. The fetch layer resolves each hostname, rejects nonpublic answers, pins an approved IP for the connection, and checks every redirect. Playwright routes document and subresource requests through that same fetch layer. Readability extracts the article; if it finds none, conversion falls back to the page body. Turndown produces GFM tables and fenced code blocks. Front matter uses YAML-compatible escaped strings.
 
-```
-URL
- │
- ▼
-Playwright (headless Chromium)
-  Fetches the page with a real browser engine.
-  Waits for JS to settle (networkidle).
-  Blocks images/fonts/media to speed up loading.
- │
- ▼
-Mozilla Readability
-  Parses the rendered HTML.
-  Extracts only the main article content.
-  Resolves relative URLs to absolute.
- │
- ▼
-Turndown + GFM plugin
-  Converts clean HTML → Markdown.
-  Preserves tables, code blocks, links.
-  Strips scripts, styles, iframes.
- │
- ▼
-Output
-  YAML front matter + Markdown body.
-```
+A conversion is limited to 30 seconds, 80 requests, 2 MB per resource, 4 MB rendered HTML, 12 MB aggregate downloads, and 2 MB Markdown output. The web server allows two active conversions and ten conversion requests per client IP per minute. Chromium JavaScript heap is limited to 128 MB; the server checks its own RSS before accepting work. For public deployment, also set an OS/container memory limit and outbound network policy.
 
-### Technology choices
+## Security and privacy
 
-| Concern | Choice | Why |
-|---|---|---|
-| JS rendering | Playwright + Chromium | Most reliable; handles any modern website |
-| Content extraction | Mozilla Readability | Battle-tested; same engine as Firefox Reader Mode |
-| HTML → MD | Turndown + GFM plugin | Actively maintained; highly configurable |
-| HTTP server | Express | Minimal, well-understood; no overkill for a local tool |
-| Frontend | Vanilla JS + CSS | Zero build step; fast to load; easy to modify |
+Submitted URLs and page content are untrusted. The converter accepts only public HTTP(S) URLs on standard ports, rejects private and special IP ranges and mixed DNS answers, and checks redirects and browser resource requests. Browser service workers and WebSockets are disabled. Browser contexts are closed after each request. The preview escapes HTML and admits only HTTP(S) image and link targets. A restrictive Content Security Policy protects the app UI.
 
----
+The server **does** receive submitted URLs and fetch page content. Do not submit private or sensitive links. A public host should also enforce egress rules denying private and metadata networks, isolate the worker in a container, set a hard memory cap, place rate limiting at the edge, and review logging/retention. Application checks alone are not a substitute for network isolation.
 
-## Configuration
+## Deployment note
 
-The server port defaults to `3000`. To change it:
-
-```bash
-PORT=8080 npm start
-```
-
----
+This repository is ready for local use and a separately hosted browser worker; it is not configured as a Vercel Function. Vercel's [Function limits](https://vercel.com/docs/functions/limitations) include a 250 MB uncompressed bundle limit and 2 GB Hobby memory limit. Chromium installation and runtime behavior make fitting this complete Express/Playwright worker into a Function impractical without a separate binary/package strategy and deployment testing. A sensible design is to host `public/` on Vercel and run the Express API in a container with Chromium, egress firewall rules, CPU and memory quotas, TLS, and edge rate limiting. Set the frontend API base URL and CORS/CSRF policy for that split deployment before publishing it. This repository does not claim a working Vercel deployment.
 
 ## Limitations
 
-- Pages behind a login wall require you to be authenticated — the headless browser has no access to your personal sessions.
-- Some sites actively block headless browsers. If a conversion fails, try the page in Reader Mode in your browser first to confirm there's extractable content.
-- Conversion takes 3–15 seconds depending on page complexity and network speed.
+This converts a single page. It does not crawl a site or access authenticated sessions. Sites may block automation, require interaction, rely on unsupported network APIs, or render content after the bounded readiness window. The preview supports common Markdown constructs and escapes the rest; it does not fully render every GFM extension. Large pages and inaccessible URLs return an error. A ZIP batch exporter is not included: concurrent browser jobs and archives would need separate quotas and admission controls before being suitable for a public demo.
+
+## Development
+
+```sh
+npm run dev
+npm run check
+npm run format
+```
+
+`npm run check` runs syntax linting, whitespace formatting checks, local fixture tests, API tests, and a Playwright UI test. CI installs Chromium and runs the same gate. Tests use local HTML and a loopback server, so they do not depend on live sites.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [CHANGELOG.md](CHANGELOG.md). Licensed under [MIT](LICENSE).
