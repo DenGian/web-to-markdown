@@ -1,130 +1,58 @@
-/**
- * server.js
- *
- * Express HTTP server and API routing.
- *
- * Endpoints:
- *   POST /api/convert   — accepts { url } in JSON body, returns conversion result
- *   GET  /api/health    — lightweight liveness probe (useful for debugging)
- *   GET  *              — serves the static frontend from /public
- *
- * Design notes:
- *   - We intentionally keep this file thin: routing + error handling only.
- *     All conversion logic lives in converter.js so it can be tested and
- *     imported independently of the HTTP layer.
- *   - express.static serves the frontend, avoiding a separate dev server or
- *     build step. For a local single-user tool this is perfectly sufficient.
- */
+import express from 'express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { convertUrlToMarkdown } from './converter.js';
+import { ConversionError, parsePublicUrl } from './security.js';
 
-import express from "express";
-import path from "path";
-import { fileURLToPath } from "url";
-import { convertUrlToMarkdown } from "./converter.js";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const MAX_CONCURRENT = 2;
+const RATE_WINDOW = 60_000;
+const RATE_MAX = 10;
 
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
+export function createApp(convert = convertUrlToMarkdown) {
+  const app = express();
+  const clients = new Map();
+  let active = 0;
+  app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    res.set('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https: http:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Referrer-Policy', 'no-referrer');
+    next();
+  });
+  app.use(express.json({ limit: '8kb' }));
+  app.post('/api/convert', async (req, res) => {
+    const key = req.ip;
+    const now = Date.now();
+    if (clients.size > 10000) for (const [ip, record] of clients) if (now - record.start > RATE_WINDOW) clients.delete(ip);
+    const record = clients.get(key);
+    const count = record && now - record.start < RATE_WINDOW ? record.count + 1 : 1;
+    clients.set(key, { start: count === 1 ? now : record.start, count });
+    if (count > RATE_MAX) return res.status(429).json({ error: 'Too many requests. Try again shortly.' });
+    try {
+      parsePublicUrl(req.body?.url);
+      if (req.body.mode && !['article', 'full'].includes(req.body.mode) || req.body.frontMatter !== undefined && typeof req.body.frontMatter !== 'boolean') throw new ConversionError('Invalid conversion options.', 400);
+      if (active >= MAX_CONCURRENT || process.memoryUsage().rss > 500_000_000) return res.status(503).json({ error: 'The converter is busy. Try again shortly.' });
+      active++;
+      try {
+        const result = await convert(req.body.url, { mode: req.body.mode, frontMatter: req.body.frontMatter });
+        return res.json(result);
+      } finally { active--; }
+    } catch (error) {
+      if (!(error instanceof ConversionError)) console.error('Unexpected conversion failure');
+      return res.status(error instanceof ConversionError ? error.status : 500).json({ error: error instanceof ConversionError ? error.message : 'Conversion failed. Try another page.' });
+    }
+  });
+  app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+  app.use('/vendor', express.static(path.join(root, 'public/vendor'), { immutable: true, maxAge: '1d' }));
+  app.use(express.static(path.join(root, 'public')));
+  app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API endpoint.' }));
+  app.get('*', (_req, res) => res.sendFile(path.join(root, 'public/index.html')));
+  app.use((error, _req, res, _next) => res.status(error.status === 413 ? 413 : 400).json({ error: error.status === 413 ? 'Request is too large.' : 'Invalid JSON request.' }));
+  return app;
+}
 
-// __dirname isn't available in ES modules; reconstruct it from import.meta.url
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const app = express();
-const PORT = process.env.PORT ?? 3000;
-
-// Parse JSON request bodies
-app.use(express.json());
-
-// Serve the frontend (index.html + assets) from the /public directory
-app.use(express.static(path.join(__dirname, "../public")));
-
-// ---------------------------------------------------------------------------
-// API Routes
-// ---------------------------------------------------------------------------
-
-/**
- * POST /api/convert
- *
- * Body:   { "url": "https://example.com/article" }
- * Returns: { "markdown": "...", "title": "...", "byline": "...", "url": "..." }
- *
- * Errors:
- *   400 — missing or invalid URL
- *   422 — URL is valid but conversion failed (e.g. site blocked the scraper)
- *   500 — unexpected internal error
- */
-app.post("/api/convert", async (req, res) => {
-  const { url } = req.body;
-
-  // Basic input validation — a missing or obviously non-URL value should fail
-  // fast without spinning up a Playwright instance.
-  if (!url || typeof url !== "string") {
-    return res.status(400).json({ error: "A valid URL string is required." });
-  }
-
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(url);
-  } catch {
-    return res.status(400).json({ error: `"${url}" is not a valid URL.` });
-  }
-
-  if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-    return res
-      .status(400)
-      .json({ error: "Only http:// and https:// URLs are supported." });
-  }
-
-  console.log(`[convert] Starting: ${url}`);
-  const startTime = Date.now();
-
-  try {
-    const result = await convertUrlToMarkdown(url);
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`[convert] Done in ${elapsed}s: "${result.title}"`);
-
-    return res.json(result);
-  } catch (err) {
-    console.error(`[convert] Failed: ${url}\n`, err);
-
-    // Give actionable messages for known failure modes rather than a generic crash message.
-    const isBrowserMissing = err.message?.includes("Executable doesn't exist");
-    const isNavigationError =
-      err.message?.includes("net::") ||
-      err.message?.includes("Timeout") ||
-      err.message?.includes("ERR_");
-
-    const status = isBrowserMissing ? 503 : isNavigationError ? 422 : 500;
-    const message = isBrowserMissing
-      ? "Chromium is not installed. Run `npx playwright install chromium` in the project folder, then restart the server."
-      : isNavigationError
-      ? `Could not load the page: ${err.message}`
-      : "Conversion failed due to an internal error. Check the server logs.";
-
-    return res.status(status).json({ error: message });
-  }
-});
-
-/**
- * GET /api/health
- *
- * Returns 200 OK with a simple JSON payload. Useful for confirming the server
- * is running when debugging startup issues.
- */
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
-
-// Catch-all: send index.html for any non-API path so the SPA handles routing
-app.get("*", (_req, res) => {
-  res.sendFile(path.join(__dirname, "../public/index.html"));
-});
-
-// ---------------------------------------------------------------------------
-// Start
-// ---------------------------------------------------------------------------
-
-app.listen(PORT, () => {
-  console.log(`\n  Website → Markdown Converter`);
-  console.log(`  Running at: http://localhost:${PORT}\n`);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const port = Number(process.env.PORT || 3000);
+  createApp().listen(port, () => console.log(`Website → Markdown: http://localhost:${port}`));
+}

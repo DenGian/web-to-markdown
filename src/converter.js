@@ -1,216 +1,108 @@
-/**
- * converter.js
- *
- * Core conversion pipeline: URL → clean HTML → Markdown
- *
- * Pipeline stages:
- *   1. Playwright (headless Chromium) fetches the page and waits for JS to settle.
- *      This handles SPAs, lazy-loaded content, and cookie banners.
- *
- *   2. Mozilla Readability extracts the main article body from the raw HTML.
- *      This mirrors what Firefox's "Reader Mode" does — stripping navbars, ads,
- *      footers, sidebars, and other page chrome so only the meaningful content
- *      survives into Markdown.
- *
- *   3. Turndown (+ GFM plugin) converts the cleaned HTML to Markdown.
- *      The GFM plugin adds support for tables, strikethrough, and task lists
- *      which base CommonMark lacks.
- */
+import { chromium } from 'playwright';
+import { Readability } from '@mozilla/readability';
+import { JSDOM } from 'jsdom';
+import TurndownService from 'turndown';
+import { gfm } from 'turndown-plugin-gfm';
+import { ConversionError, parsePublicUrl } from './security.js';
+import { safeFetch, LIMITS } from './fetch.js';
 
-import { chromium } from "playwright";
-import { Readability } from "@mozilla/readability";
-import { JSDOM } from "jsdom";
-import TurndownService from "turndown";
-import { gfm } from "turndown-plugin-gfm";
-
-// ---------------------------------------------------------------------------
-// Turndown configuration
-// ---------------------------------------------------------------------------
-
-/**
- * Creates and configures a TurndownService instance.
- *
- * Kept as a factory so each conversion gets a fresh instance — TurndownService
- * accumulates state (custom rules list) and reusing one across requests could
- * cause subtle bleed-through between conversions in a concurrent setting.
- */
-function createTurndownService() {
-  const td = new TurndownService({
-    headingStyle: "atx", // Use # syntax instead of underline style
-    hr: "---",
-    bulletListMarker: "-",
-    codeBlockStyle: "fenced", // ``` blocks instead of indented
-    fence: "```",
-    emDelimiter: "_",
-    strongDelimiter: "**",
-    linkStyle: "inlined",
+function turndown() {
+  const service = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-', emDelimiter: '_', strongDelimiter: '**' });
+  service.use(gfm);
+  service.remove(['script', 'style', 'noscript', 'iframe', 'form', 'button', 'svg']);
+  service.addRule('preCode', {
+    filter: (node) => node.nodeName === 'PRE' && node.firstElementChild?.nodeName === 'CODE',
+    replacement: (_content, node) => {
+      const code = node.firstElementChild;
+      const language = (code.className.match(/(?:language|lang)-([\w+-]+)/)?.[1] || '').replace(/[^\w+-]/g, '');
+      const value = code.textContent.replace(/\n$/, '');
+      const fence = '`'.repeat(Math.max(3, ...Array.from(value.matchAll(/`+/g), (match) => match[0].length + 1)));
+      return `\n\n${fence}${language}\n${value}\n${fence}\n\n`;
+    },
   });
-
-  // GFM adds: tables, strikethrough, task list items
-  td.use(gfm);
-
-  // Remove elements that survive Readability but add no reading value:
-  // scripts, styles, hidden inputs, and social/share widgets.
-  td.remove(["script", "style", "noscript", "iframe", "form", "button"]);
-
-  return td;
+  return service;
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Converts a webpage at `url` to Markdown.
- *
- * @param {string} url - Fully qualified URL (must start with http/https).
- * @returns {Promise<ConversionResult>}
- *
- * @typedef {Object} ConversionResult
- * @property {string} markdown  - The converted Markdown content.
- * @property {string} title     - Page title extracted by Readability.
- * @property {string} byline    - Author / byline if Readability found one.
- * @property {string} url       - The canonical URL that was actually loaded
- *                                (may differ from input after redirects).
- */
-export async function convertUrlToMarkdown(url) {
-  // Stage 1 — fetch the rendered page HTML via Playwright
-  const { html, finalUrl } = await fetchRenderedHtml(url);
-
-  // Stage 2 — extract main content with Readability
-  const { article, dom } = extractArticle(html, finalUrl);
-
-  // Stage 3 — convert to Markdown
-  const td = createTurndownService();
-
-  // Prefer Readability's extracted content; fall back to full <body> if
-  // Readability couldn't identify an article (e.g. purely navigational pages).
-  const sourceHtml = article?.content ?? dom.window.document.body.innerHTML;
-
-  const markdown = td.turndown(sourceHtml);
-
-  return {
-    markdown: buildMarkdownDocument(markdown, article, finalUrl),
-    title: article?.title ?? extractTitleFromDom(dom),
-    byline: article?.byline ?? "",
-    url: finalUrl,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Launches a headless Chromium browser, navigates to `url`, waits for the
- * network to go idle (JS bundles executed, async data fetched), then returns
- * the full serialized HTML.
- *
- * `networkidle` waits until there are no more than 0 network connections for
- * at least 500 ms, which is a reliable signal that SPA hydration is complete.
- *
- * The browser is launched fresh per conversion rather than kept warm because:
- *   - Keeps memory usage predictable for a local single-user tool.
- *   - Avoids session/cookie state leaking between unrelated conversions.
- *   - A warm browser pool would be premature optimisation at this scale.
- */
-async function fetchRenderedHtml(url) {
-  const browser = await chromium.launch({ headless: true });
-
-  try {
-    const context = await browser.newContext({
-      // Mimic a real desktop browser to avoid bot-detection blocks
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
-        "AppleWebKit/537.36 (KHTML, like Gecko) " +
-        "Chrome/124.0.0.0 Safari/537.36",
-      viewport: { width: 1280, height: 800 },
-      // Block images and fonts to speed up loading; we only need the DOM
-      extraHTTPHeaders: { "Accept-Language": "en-US,en;q=0.9" },
-    });
-
-    // Abort image/font requests — we don't need them for text extraction
-    // and blocking them can cut load time by 50–80% on media-heavy pages.
-    await context.route("**/*", (route) => {
-      const type = route.request().resourceType();
-      if (["image", "media", "font"].includes(type)) {
-        route.abort();
-      } else {
-        route.continue();
-      }
-    });
-
-    const page = await context.newPage();
-
-    await page.goto(url, {
-      waitUntil: "networkidle",
-      timeout: 30_000, // 30 s; generous for slow sites
-    });
-
-    const html = await page.content();
-    const finalUrl = page.url(); // Capture post-redirect URL
-
-    return { html, finalUrl };
-  } finally {
-    // Always close the browser, even on error, to avoid orphaned processes
-    await browser.close();
-  }
-}
-
-/**
- * Runs Mozilla Readability on the raw HTML string.
- *
- * Readability mutates the DOM it's given, so we parse a fresh JSDOM instance
- * rather than passing one that might be reused elsewhere.
- *
- * The `url` parameter is passed to JSDOM so that relative URLs in `href` and
- * `src` attributes are resolved to absolute URLs — critical for images and
- * links to remain valid in the output Markdown.
- */
-function extractArticle(html, url) {
+export function convertHtml(html, url, options = {}) {
+  const mode = options.mode || 'article';
+  if (!['article', 'full'].includes(mode)) throw new ConversionError('Choose article or full page mode.', 400);
   const dom = new JSDOM(html, { url });
-  const reader = new Readability(dom.window.document, {
-    // Keep classes on elements so Turndown rules can reference them if needed
-    keepClasses: false,
-    // Disabling this lets Readability be more aggressive about content extraction
-    nbTopCandidates: 5,
-  });
-
-  const article = reader.parse(); // Returns null if no article found
-  return { article, dom };
+  const document = dom.window.document;
+  const title = (document.querySelector('meta[property="og:title"]')?.content || document.title || document.querySelector('h1')?.textContent || 'Untitled').trim().slice(0, 500);
+  const author = (document.querySelector('meta[name="author"]')?.content || '').trim().slice(0, 500);
+  // Resolve URLs before Readability clones nodes; it otherwise retains relative paths.
+  for (const element of document.querySelectorAll('[href], [src]')) {
+    for (const attribute of ['href', 'src']) {
+      if (!element.hasAttribute(attribute)) continue;
+      try {
+        const resolved = new URL(element.getAttribute(attribute), url);
+        if (['http:', 'https:'].includes(resolved.protocol) || attribute === 'href' && resolved.protocol === 'mailto:') element.setAttribute(attribute, resolved.href);
+        else element.removeAttribute(attribute);
+      } catch { element.removeAttribute(attribute); }
+    }
+  }
+  const article = mode === 'article' ? new Readability(document.cloneNode(true), { keepClasses: true }).parse() : null;
+  const source = article?.content || document.body?.innerHTML || '';
+  const body = turndown().turndown(source).trim();
+  if (!body || !/[\p{L}\p{N}]/u.test(body)) throw new ConversionError('No readable content was found on this page.');
+  const finalTitle = (article?.title || title).trim().slice(0, 500);
+  const byline = (article?.byline || author).trim().slice(0, 500);
+  const metadata = { title: finalTitle, source: url, date: new Date().toISOString().slice(0, 10) };
+  if (byline) metadata.author = byline;
+  // JSON string literals are valid YAML double-quoted scalars and escape control characters.
+  const frontMatter = options.frontMatter === false ? '' : `---\n${Object.entries(metadata).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n')}\n---\n\n`;
+  const markdown = `${frontMatter}${body}\n`;
+  if (Buffer.byteLength(markdown) > LIMITS.outputBytes) throw new ConversionError('The Markdown output exceeded the size limit.');
+  return { markdown, title: finalTitle, byline, url };
 }
 
-/**
- * Assembles the final Markdown document with a YAML-style front-matter header.
- *
- * Including metadata at the top (title, source URL, date) makes the output
- * files self-documenting — useful when you've saved many conversions and need
- * to know where a file came from.
- */
-function buildMarkdownDocument(body, article, url) {
-  const title = article?.title ?? "Untitled";
-  const byline = article?.byline ? `\nauthor: "${article.byline}"` : "";
-  const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-
-  const frontMatter = `---
-title: "${title.replace(/"/g, '\\"')}"
-source: "${url}"${byline}
-date: "${date}"
----
-
-`;
-
-  return frontMatter + body;
-}
-
-/**
- * Fallback title extraction when Readability returns null.
- * Tries <title> then the first <h1>.
- */
-function extractTitleFromDom(dom) {
-  return (
-    dom.window.document.title ||
-    dom.window.document.querySelector("h1")?.textContent?.trim() ||
-    "Untitled"
-  );
+export async function convertUrlToMarkdown(input, options = {}, fetchDependencies = {}) {
+  parsePublicUrl(input);
+  const budget = { requests: 0, bytes: 0, deadline: Date.now() + LIMITS.totalMs };
+  const initial = await safeFetch(input, budget, { ...fetchDependencies, accept: 'text/html,application/xhtml+xml' });
+  if (initial.status < 200 || initial.status >= 300) throw new ConversionError(`The website returned HTTP ${initial.status}.`);
+  if (!/^(text\/html|application\/xhtml\+xml)\b/i.test(initial.headers['content-type'] || '')) throw new ConversionError('The URL did not return an HTML page.');
+  if (initial.body.length > LIMITS.resourceBytes) throw new ConversionError('The page exceeded the size limit.');
+  let browser;
+  let timer;
+  try {
+    browser = await chromium.launch({ headless: true, timeout: Math.min(10000, Math.max(1, budget.deadline - Date.now())), args: ['--disable-background-networking', '--disable-extensions', '--disable-features=Prerender2,SpeculationRulesPrefetchProxy', '--disable-features=WebRtcHideLocalIpsWithMdns', '--js-flags=--max-old-space-size=128'] });
+    const context = await browser.newContext({ serviceWorkers: 'block', acceptDownloads: false, viewport: { width: 1280, height: 800 } });
+    await context.route('**/*', async (route) => {
+      const request = route.request();
+      if (!['http:', 'https:'].includes(new URL(request.url()).protocol) || ['image', 'media', 'font', 'websocket', 'eventsource'].includes(request.resourceType()) || request.method() !== 'GET') return route.abort();
+      try {
+        const result = request.isNavigationRequest() && request.url() === initial.url ? initial : await safeFetch(request.url(), budget, fetchDependencies);
+        const contentType = result.headers['content-type'] || 'application/octet-stream';
+        await route.fulfill({ status: result.status, contentType, body: result.body });
+      } catch { await route.abort(); }
+    });
+    const page = await context.newPage();
+    await page.addInitScript(() => {
+      window.WebSocket = class { constructor() { throw new Error('WebSocket disabled'); } };
+      window.Worker = class { constructor() { throw new Error('Worker disabled'); } };
+      window.SharedWorker = class { constructor() { throw new Error('Worker disabled'); } };
+      window.RTCPeerConnection = class { constructor() { throw new Error('WebRTC disabled'); } };
+      window.EventSource = class { constructor() { throw new Error('EventSource disabled'); } };
+      navigator.sendBeacon = () => false;
+      if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = () => Promise.reject(new Error('Media disabled'));
+    });
+    const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new ConversionError('Conversion timed out.')), Math.max(1, budget.deadline - Date.now())); });
+    const work = (async () => {
+      await page.goto(initial.url, { waitUntil: 'domcontentloaded', timeout: LIMITS.navigationMs });
+      // Give hydration a short fixed window; ongoing analytics requests do not hold conversion open.
+      await page.waitForTimeout(1500);
+      const html = await page.content();
+      if (Buffer.byteLength(html) > LIMITS.pageBytes) throw new ConversionError('The rendered page exceeded the size limit.');
+      return convertHtml(html, initial.url, options);
+    })();
+    return await Promise.race([work, timeout]);
+  } catch (error) {
+    if (error instanceof ConversionError) throw error;
+    if (/Executable doesn't exist/.test(error.message)) throw new ConversionError('Chromium is unavailable. Install the Playwright browser.', 503);
+    throw new ConversionError('Could not load or convert this page.');
+  } finally {
+    clearTimeout(timer);
+    if (browser) await browser.close().catch(() => {});
+  }
 }
