@@ -4,12 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Website → Markdown</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-
-  <!-- marked.js: renders raw Markdown to HTML for the Preview tab -->
-  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -23,7 +17,7 @@
         <span class="logo-icon" aria-hidden="true">⬇</span>
         <span class="logo-text">Web<span class="logo-accent">→</span>MD</span>
       </div>
-      <p class="header-tagline">Convert any webpage to clean, readable Markdown</p>
+      <p class="header-tagline">Turn a public web page into editable Markdown</p>
     </div>
   </header>
 
@@ -48,13 +42,19 @@
               spellcheck="false"
               autocomplete="off"
             />
+            <button type="button" id="clear-btn" class="clear-btn" aria-label="Clear URL" hidden>✕</button>
           </div>
           <button type="submit" id="convert-btn" class="btn btn-primary">
             <span class="btn-label">Convert</span>
             <span class="btn-spinner" aria-hidden="true" hidden></span>
           </button>
         </div>
-        <p class="input-hint">Paste any URL — JavaScript-heavy pages are fully supported.</p>
+        <div class="options-row">
+          <label for="mode-select">Content</label>
+          <select id="mode-select"><option value="article">Article only</option><option value="full">Full page</option></select>
+          <label class="checkbox-option"><input id="front-matter" type="checkbox" checked /> Include front matter</label>
+        </div>
+        <p class="input-hint">Use a public HTTP or HTTPS URL. Some sites may block automated browsers.</p>
       </form>
     </section>
 
@@ -105,11 +105,11 @@
 
       <!-- Source panel -->
       <div id="panel-source" class="panel" role="tabpanel" aria-labelledby="tab-source">
-        <pre id="markdown-output" class="markdown-source" tabindex="0" aria-label="Markdown source"></pre>
+        <label for="markdown-output" class="sr-only">Edit Markdown</label><textarea id="markdown-output" class="markdown-source" spellcheck="false" aria-label="Edit Markdown"></textarea>
       </div>
 
       <!-- Preview panel (rendered HTML from Markdown) -->
-      <div id="panel-preview" class="panel panel-hidden" role="tabpanel" aria-labelledby="tab-preview">
+      <div id="panel-preview" class="panel" role="tabpanel" hidden aria-labelledby="tab-preview">
         <div id="markdown-preview" class="markdown-preview prose"></div>
       </div>
 
@@ -121,7 +121,7 @@
        Footer
   ====================================================================== -->
   <footer class="app-footer">
-    <p>Runs locally &bull; No data sent to any server &bull; Powered by Playwright + Readability + Turndown</p>
+    <p>The server fetches submitted URLs. Avoid private links or sensitive content.</p>
   </footer>
 
   <script src="app.js" type="module"></script>

@@ -1,296 +1,94 @@
-/**
- * app.js
- *
- * Frontend application logic for the Website → Markdown converter.
- *
- * Responsibilities:
- *   - Handle form submission and drive the convert API call
- *   - Render conversion output (raw Markdown source + rendered preview)
- *   - Tab switching between Source and Preview panels
- *   - Copy-to-clipboard with visual feedback
- *   - "Save as .md" using the File System Access API (showSaveFilePicker),
- *     with a graceful fallback to a standard <a download> if the API isn't
- *     available (e.g. Firefox < 116, or the page isn't on a secure origin).
- *
- * This file is loaded as an ES module (<script type="module">) so top-level
- * await and import syntax are available, but since we have no bundler we keep
- * all logic in this single file rather than splitting across modules.
- */
+import { renderPreview } from './preview.js';
 
-// ---------------------------------------------------------------------------
-// DOM refs — cached at module load time so we don't re-query on every event
-// ---------------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const form = $('convert-form');
+const urlInput = $('url-input');
+const clearBtn = $('clear-btn');
+const convertBtn = $('convert-btn');
+const statusBanner = $('status-banner');
+const outputCard = $('output-card');
+const editor = $('markdown-output');
+let currentTitle = 'output';
 
-const form         = document.getElementById("convert-form");
-const urlInput     = document.getElementById("url-input");
-const convertBtn   = document.getElementById("convert-btn");
-const btnLabel     = convertBtn.querySelector(".btn-label");
-const btnSpinner   = convertBtn.querySelector(".btn-spinner");
-
-const statusBanner  = document.getElementById("status-banner");
-const statusIcon    = document.getElementById("status-icon");
-const statusMessage = document.getElementById("status-message");
-
-const outputCard    = document.getElementById("output-card");
-const outputTitle   = document.getElementById("output-title");
-const outputSource  = document.getElementById("output-source-link");
-
-const tabSource    = document.getElementById("tab-source");
-const tabPreview   = document.getElementById("tab-preview");
-const panelSource  = document.getElementById("panel-source");
-const panelPreview = document.getElementById("panel-preview");
-
-const markdownOutput  = document.getElementById("markdown-output");
-const markdownPreview = document.getElementById("markdown-preview");
-
-const copyBtn     = document.getElementById("copy-btn");
-const downloadBtn = document.getElementById("download-btn");
-
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
-
-/** The last successfully converted Markdown string. Used by copy and download. */
-let currentMarkdown = "";
-
-/** Title slug for the default save filename. */
-let currentTitle = "output";
-
-// ---------------------------------------------------------------------------
-// Form submission
-// ---------------------------------------------------------------------------
-
-form.addEventListener("submit", async (e) => {
-  e.preventDefault();
-
-  const url = urlInput.value.trim();
-  if (!url) return;
-
-  setLoading(true);
-  showStatus("loading", "⏳", "Fetching and converting — this may take a few seconds…");
-  hideOutput();
-
-  try {
-    const result = await fetchConversion(url);
-
-    currentMarkdown = result.markdown;
-    currentTitle    = slugify(result.title || "output");
-
-    renderOutput(result);
-    showStatus("success", "✅", `Converted "${result.title}" successfully.`);
-    showOutput();
-  } catch (err) {
-    showStatus("error", "❌", err.message || "An unexpected error occurred.");
-  } finally {
-    setLoading(false);
-  }
-});
-
-// ---------------------------------------------------------------------------
-// API call
-// ---------------------------------------------------------------------------
-
-/**
- * Calls the backend /api/convert endpoint.
- *
- * Throws a descriptive Error on non-2xx responses so the caller can display
- * it directly in the status banner without any extra parsing.
- *
- * @param {string} url
- * @returns {Promise<{ markdown: string, title: string, byline: string, url: string }>}
- */
-async function fetchConversion(url) {
-  const response = await fetch("/api/convert", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.error ?? `Server error: ${response.status}`);
-  }
-
-  return data;
-}
-
-// ---------------------------------------------------------------------------
-// Rendering
-// ---------------------------------------------------------------------------
-
-/** Populates the output card with conversion results. */
-function renderOutput({ markdown, title, url }) {
-  // Truncate long titles for display
-  outputTitle.textContent = title || "Untitled";
-
-  outputSource.textContent = url;
-  outputSource.href        = url;
-
-  // Always start on the Source tab when showing new content
-  switchTab("source");
-
-  markdownOutput.textContent = markdown;
-
-  // Lazily render the preview — we pre-render now so switching tabs is instant
-  markdownPreview.innerHTML = window.marked.parse(markdown);
-}
-
-// ---------------------------------------------------------------------------
-// UI state helpers
-// ---------------------------------------------------------------------------
-
-function setLoading(isLoading) {
-  convertBtn.disabled = isLoading;
-  btnLabel.hidden     = isLoading;
-  btnSpinner.hidden   = !isLoading;
-  urlInput.disabled   = isLoading;
-}
-
-function showStatus(type, icon, message) {
+urlInput.addEventListener('input', () => { clearBtn.hidden = !urlInput.value; });
+clearBtn.addEventListener('click', () => { urlInput.value = ''; clearBtn.hidden = true; urlInput.focus(); });
+editor.addEventListener('input', () => { $('markdown-preview').innerHTML = renderPreview(editor.value); });
+function status(type, message) {
   statusBanner.hidden = false;
   statusBanner.className = `status-banner status-${type}`;
-  statusIcon.textContent = icon;
-  statusMessage.textContent = message;
+  $('status-icon').textContent = type === 'error' ? '!' : type === 'loading' ? '…' : '✓';
+  $('status-message').textContent = message;
 }
-
-function showOutput()  { outputCard.hidden = false; }
-function hideOutput()  { outputCard.hidden = true; }
-
-// ---------------------------------------------------------------------------
-// Tab switching
-// ---------------------------------------------------------------------------
-
-tabSource.addEventListener("click",  () => switchTab("source"));
-tabPreview.addEventListener("click", () => switchTab("preview"));
-
-/**
- * Switches the active tab panel.
- * Using a string discriminator ("source" | "preview") keeps the logic readable
- * without needing a loop over a tab list.
- *
- * @param {"source" | "preview"} which
- */
-function switchTab(which) {
-  const showSource = which === "source";
-
-  tabSource.classList.toggle("tab-active", showSource);
-  tabSource.setAttribute("aria-selected", String(showSource));
-
-  tabPreview.classList.toggle("tab-active", !showSource);
-  tabPreview.setAttribute("aria-selected", String(!showSource));
-
-  panelSource.classList.toggle("panel-hidden",  !showSource);
-  panelPreview.classList.toggle("panel-hidden",  showSource);
+function tab(which) {
+  const source = which === 'source';
+  $('tab-source').classList.toggle('tab-active', source);
+  $('tab-preview').classList.toggle('tab-active', !source);
+  $('tab-source').setAttribute('aria-selected', String(source));
+  $('tab-preview').setAttribute('aria-selected', String(!source));
+  $('panel-source').hidden = !source;
+  $('panel-preview').hidden = source;
+  (source ? $('tab-source') : $('tab-preview')).focus();
 }
-
-// ---------------------------------------------------------------------------
-// Copy to clipboard
-// ---------------------------------------------------------------------------
-
-copyBtn.addEventListener("click", async () => {
-  if (!currentMarkdown) return;
-
+$('tab-source').addEventListener('click', () => tab('source'));
+$('tab-preview').addEventListener('click', () => tab('preview'));
+for (const id of ['tab-source', 'tab-preview']) {
+  $(id).addEventListener('keydown', (event) => {
+    if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault();
+      tab(id === 'tab-source' ? 'preview' : 'source');
+    }
+  });
+}
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  outputCard.hidden = true;
+  convertBtn.disabled = true;
+  $('front-matter').disabled = true;
+  $('mode-select').disabled = true;
+  $('url-input').disabled = true;
+  convertBtn.querySelector('.btn-label').hidden = true;
+  convertBtn.querySelector('.btn-spinner').hidden = false;
+  status('loading', 'Fetching and converting this page…');
   try {
-    await navigator.clipboard.writeText(currentMarkdown);
-    flashCopied();
-  } catch {
-    // Clipboard API can fail if the document isn't focused (e.g. automated tests)
-    console.warn("Clipboard write failed; this is usually a browser focus issue.");
+    const response = await fetch('/api/convert', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: urlInput.value.trim(), mode: $('mode-select').value, frontMatter: $('front-matter').checked }) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Conversion failed.');
+    currentTitle = (result.title || 'output').toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'output';
+    $('output-title').textContent = result.title;
+    $('output-source-link').textContent = result.url;
+    $('output-source-link').href = result.url;
+    editor.value = result.markdown;
+    $('markdown-preview').innerHTML = renderPreview(editor.value);
+    tab('source');
+    outputCard.hidden = false;
+    status('success', 'Converted. You can edit the Markdown before copying or saving.');
+  } catch (error) { status('error', error.message || 'Conversion failed.'); }
+  finally {
+    convertBtn.disabled = false;
+    $('front-matter').disabled = false;
+    $('mode-select').disabled = false;
+    $('url-input').disabled = false;
+    convertBtn.querySelector('.btn-label').hidden = false;
+    convertBtn.querySelector('.btn-spinner').hidden = true;
   }
 });
-
-/** Shows a brief "Copied!" state on the copy button, then reverts. */
-function flashCopied() {
-  const original = copyBtn.innerHTML;
-  copyBtn.innerHTML = '<span class="btn-icon" aria-hidden="true">✅</span> Copied!';
-  copyBtn.classList.add("btn-copied");
-
-  setTimeout(() => {
-    copyBtn.innerHTML = original;
-    copyBtn.classList.remove("btn-copied");
-  }, 2000);
-}
-
-// ---------------------------------------------------------------------------
-// Save as .md (with File System Access API + fallback)
-// ---------------------------------------------------------------------------
-
-downloadBtn.addEventListener("click", () => saveMarkdownFile());
-
-/**
- * Saves the current Markdown to a file.
- *
- * Prefers the File System Access API (showSaveFilePicker) so the user can
- * navigate to any folder before saving — this is the "choose destination"
- * experience requested.
- *
- * Falls back to the classic anchor-download trick for browsers that don't
- * support showSaveFilePicker (Firefox < 116, Safari < 17, non-HTTPS).
- */
-async function saveMarkdownFile() {
-  if (!currentMarkdown) return;
-
-  const filename = `${currentTitle}.md`;
-
-  if (typeof window.showSaveFilePicker === "function") {
-    // Modern path: native OS "Save As" dialog with folder picker
-    try {
-      const fileHandle = await window.showSaveFilePicker({
-        suggestedName: filename,
-        types: [
-          {
-            description: "Markdown file",
-            accept: { "text/markdown": [".md"] },
-          },
-        ],
-      });
-
-      const writable = await fileHandle.createWritable();
-      await writable.write(currentMarkdown);
+$('copy-btn').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(editor.value); status('success', 'Edited Markdown copied.'); }
+  catch { status('error', 'Clipboard access failed. Select and copy the Markdown instead.'); }
+});
+$('download-btn').addEventListener('click', async () => {
+  const name = `${currentTitle}.md`;
+  try {
+    if (window.showSaveFilePicker) {
+      const handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }] });
+      const writable = await handle.createWritable();
+      await writable.write(editor.value);
       await writable.close();
-
-      return; // Success — nothing more to do
-    } catch (err) {
-      // AbortError means the user cancelled the dialog — that's fine, not an error
-      if (err.name === "AbortError") return;
-      // Any other error falls through to the classic download fallback
-      console.warn("showSaveFilePicker failed, falling back:", err);
+    } else {
+      const url = URL.createObjectURL(new Blob([editor.value], { type: 'text/markdown' }));
+      const link = document.createElement('a'); link.href = url; link.download = name; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
     }
-  }
-
-  // Classic fallback: creates a temporary <a> with a blob URL and clicks it.
-  // The file lands in the browser's default downloads folder.
-  const blob = new Blob([currentMarkdown], { type: "text/markdown" });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a");
-
-  a.href     = url;
-  a.download = filename;
-  a.click();
-
-  // Revoke the object URL shortly after to free memory
-  setTimeout(() => URL.revokeObjectURL(url), 5_000);
-}
-
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-
-/**
- * Converts a page title to a safe, readable filename slug.
- *
- * e.g. "How to Build a React App | CSS-Tricks" → "how-to-build-a-react-app"
- *
- * @param {string} title
- * @returns {string}
- */
-function slugify(title) {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")  // strip special chars
-    .trim()
-    .replace(/\s+/g, "-")          // spaces → hyphens
-    .replace(/-{2,}/g, "-")        // collapse consecutive hyphens
-    .slice(0, 60);                  // cap length for filesystem safety
-}
+    status('success', 'Markdown saved.');
+  } catch (error) { if (error.name !== 'AbortError') status('error', 'Could not save the file.'); }
+});
