@@ -11,6 +11,9 @@ let currentTitle = "output";
 let baseline = "";
 let origin = "";
 let headings = [];
+let headingsSource = "";
+let actionSource = "";
+let actionHeadings = [];
 let activeView = "source";
 let renderTimer;
 let previewSource = null;
@@ -85,6 +88,7 @@ function renderResult() {
   if (activeView !== "source") renderPreviewIfNeeded();
   const stats = analyzeMarkdown(editor.value);
   headings = stats.headings;
+  headingsSource = editor.value;
   $("result-details").textContent =
     `${origin} · ${stats.wordCount} words · ${stats.headingCount} headings`;
   const items = $("outline-items");
@@ -99,20 +103,25 @@ function renderResult() {
     jump.textContent = heading.text;
     jump.setAttribute("aria-label", `Go to ${jump.textContent}`);
     jump.addEventListener("click", () => {
+      const { items, position } = currentHeading(heading, index);
+      const target = items[position];
+      if (!target) return;
       if (activeView === "source") {
         editor.focus();
-        const end = editor.value.indexOf("\n", heading.start);
+        const end = editor.value.indexOf("\n", target.start);
         editor.setSelectionRange(
-          heading.start,
+          target.start,
           end < 0 ? editor.value.length : end,
         );
-      } else
+      } else {
+        renderPreviewIfNeeded();
         $("markdown-preview")
           .querySelectorAll("h1, h2, h3, h4, h5, h6")
-          [index]?.scrollIntoView({
+          [position]?.scrollIntoView({
             behavior: "smooth",
             block: "start",
           });
+      }
     });
     const copy = document.createElement("button");
     copy.type = "button";
@@ -121,8 +130,10 @@ function renderResult() {
     copy.setAttribute("aria-label", `Copy section: ${jump.textContent}`);
     copy.addEventListener("click", async () => {
       try {
+        const { items, position } = currentHeading(heading, index);
+        if (!items[position]) return;
         await navigator.clipboard.writeText(
-          sectionMarkdown(editor.value, headings, index),
+          sectionMarkdown(editor.value, items, position),
         );
         status("success", `Copied section: ${jump.textContent}.`);
       } catch {
@@ -135,6 +146,25 @@ function renderResult() {
     group.append(jump, copy);
     items.append(group);
   });
+}
+function currentHeading(heading, index) {
+  if (headingsSource === editor.value)
+    return { items: headings, position: index };
+  if (actionSource !== editor.value) {
+    actionSource = editor.value;
+    actionHeadings = analyzeMarkdown(editor.value).headings;
+  }
+  const same = (item) =>
+    item.text === heading.text && item.level === heading.level;
+  const occurrence = headings.slice(0, index + 1).filter(same).length;
+  let seen = 0;
+  const match = actionHeadings.findIndex(
+    (item) => same(item) && ++seen === occurrence,
+  );
+  return {
+    items: actionHeadings,
+    position: match < 0 ? index : match,
+  };
 }
 function load(markdown, title, sourceUrl, label) {
   clearTimeout(renderTimer);

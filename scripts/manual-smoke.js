@@ -9,7 +9,7 @@ let browser;
 try {
   browser = await chromium.launch();
   const page = await browser.newPage({
-    viewport: { width: 1440, height: 1000 },
+    viewport: { width: 1440, height: 1230 },
     deviceScaleFactor: 1,
   });
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
@@ -50,6 +50,7 @@ try {
     await page.locator("#tab-split").getAttribute("aria-selected"),
     "true",
   );
+  assert.equal(await page.locator("#panel-source").isVisible(), true);
   assert.equal(await page.locator("#panel-preview").isVisible(), true);
   assert.equal(
     await page
@@ -68,8 +69,15 @@ try {
   assert.ok(sourceBox.x + sourceBox.width <= boxes[1].x + 1);
   assert.ok(headingBox.x >= boxes[1].x);
   assert.ok(headingBox.y < sourceBox.y + sourceBox.height);
+  // Capture the desktop image only after Split has rendered both panes.
+  await page.locator("#tab-split").click();
+  assert.equal(
+    await page.locator("#tab-split").getAttribute("aria-selected"),
+    "true",
+  );
+  assert.equal(await page.locator("#panel-preview").isVisible(), true);
   await page.waitForTimeout(250);
-  await page.screenshot({ path: "docs/screenshot.png", fullPage: true });
+  await page.screenshot({ path: "docs/screenshot.png" });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator("#tab-preview").click();
   await page.waitForTimeout(250);

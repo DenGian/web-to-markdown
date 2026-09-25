@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 — 2026-09-25
+
+- Use current editor positions for Copy section and heading navigation immediately after edits.
+- Refresh the desktop screenshot to show the Split view described in the README.
+
 ## 1.0.0 — 2026-09-25
 
 - Convert public pages to Markdown through a local web app or CLI, with Readability article extraction and body fallback.

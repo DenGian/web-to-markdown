@@ -1,6 +1,6 @@
 {
   "name": "website-to-md",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Convert a public web page into editable Markdown with a small web app or CLI.",
   "type": "module",
   "main": "src/server.js",

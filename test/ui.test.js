@@ -3,6 +3,66 @@ import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { createApp } from "../src/server.js";
 
+test("outline actions use current positions before the debounce", async () => {
+  const server = createApp(async () => ({
+    title: "Outline",
+    url: "https://example.com/",
+    extractionMode: "article",
+    warnings: [],
+    markdown: "# First\none\n\n## Target\ntwo\n\n## Next\nthree",
+  })).listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  let browser;
+  try {
+    browser = await chromium.launch();
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        value: {
+          writeText: async (value) => {
+            window.__copied = value;
+          },
+        },
+      });
+    });
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await page.locator("#url-input").fill("https://example.com/");
+    await page.locator("#convert-btn").click();
+    await page.locator("#output-card").waitFor({ state: "visible" });
+    await page.evaluate(() => {
+      const editor = document.querySelector("#markdown-output");
+      editor.value = "Before the heading\n\n" + editor.value;
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      document.querySelectorAll(".outline-copy")[1].click();
+    });
+    await page.waitForFunction(() => window.__copied !== undefined);
+    assert.equal(await page.evaluate(() => window.__copied), "## Target\ntwo");
+    const selected = await page.evaluate(() => {
+      const editor = document.querySelector("#markdown-output");
+      editor.value = "## Inserted\nnew\n\n" + editor.value;
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      document.querySelectorAll(".outline-item")[1].click();
+      return editor.value.slice(editor.selectionStart, editor.selectionEnd);
+    });
+    assert.equal(selected, "## Target");
+    await page.locator("#tab-split").click();
+    const previewTarget = await page.evaluate(() => {
+      const editor = document.querySelector("#markdown-output");
+      editor.value = "## Another\nnew\n\n" + editor.value;
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      Element.prototype.scrollIntoView = function () {
+        window.__scrolled = this.textContent;
+      };
+      document.querySelectorAll(".outline-item")[2].click();
+      return window.__scrolled;
+    });
+    assert.equal(previewTarget, "Target");
+  } finally {
+    if (browser) await browser.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("clear, options, editing, preview and save controls", async () => {
   const server = createApp(async (_url, options) => ({
     title: "Example title",
