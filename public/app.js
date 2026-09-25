@@ -12,10 +12,13 @@ let baseline = "";
 let origin = "";
 let headings = [];
 let activeView = "source";
+let renderTimer;
+let previewSource = null;
 
 function status(type, message) {
   statusBanner.hidden = false;
   statusBanner.className = `status-banner status-${type}`;
+  statusBanner.setAttribute("role", type === "error" ? "alert" : "status");
   $("status-message").textContent = message;
 }
 function changed() {
@@ -39,6 +42,13 @@ function view(which, focus = true) {
   $("panel-preview").hidden = activeView === "source";
   $("split-view").classList.toggle("is-split", activeView === "split");
   $("split-view").setAttribute("aria-labelledby", `tab-${activeView}`);
+  if (activeView !== "source") {
+    if (renderTimer) {
+      clearTimeout(renderTimer);
+      renderTimer = null;
+      renderResult();
+    } else renderPreviewIfNeeded();
+  }
   if (focus) $(`tab-${activeView}`).focus();
 }
 for (const name of ["source", "preview", "split"]) {
@@ -64,24 +74,29 @@ matchMedia("(max-width: 700px)").addEventListener("change", () => {
   if (activeView === "split") view("source", false);
 });
 
-function renderResult() {
+function renderPreviewIfNeeded() {
   const preview = $("markdown-preview");
+  if (previewSource === editor.value) return;
   preview.innerHTML = renderPreview(editor.value);
+  previewSource = editor.value;
+}
+
+function renderResult() {
+  if (activeView !== "source") renderPreviewIfNeeded();
   const stats = analyzeMarkdown(editor.value);
   headings = stats.headings;
   $("result-details").textContent =
-    `${origin} · ${stats.wordCount} words · ${stats.headingCount} headings${$("output-source-link").hidden ? "" : ` · Final URL: ${$("output-source-link").href}`}`;
+    `${origin} · ${stats.wordCount} words · ${stats.headingCount} headings`;
   const items = $("outline-items");
   items.replaceChildren();
   $("heading-outline").hidden = headings.length === 0;
-  const previewHeadings = preview.querySelectorAll("h1, h2, h3, h4, h5, h6");
   headings.forEach((heading, index) => {
     const group = document.createElement("div");
     group.className = `outline-entry outline-level-${heading.level}`;
     const jump = document.createElement("button");
     jump.type = "button";
     jump.className = "outline-item";
-    jump.textContent = previewHeadings[index]?.textContent || heading.text;
+    jump.textContent = heading.text;
     jump.setAttribute("aria-label", `Go to ${jump.textContent}`);
     jump.addEventListener("click", () => {
       if (activeView === "source") {
@@ -91,14 +106,13 @@ function renderResult() {
           heading.start,
           end < 0 ? editor.value.length : end,
         );
-        editor.scrollTop =
-          heading.line *
-          parseFloat(getComputedStyle(editor).lineHeight || "20");
       } else
-        previewHeadings[index]?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
+        $("markdown-preview")
+          .querySelectorAll("h1, h2, h3, h4, h5, h6")
+          [index]?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          });
     });
     const copy = document.createElement("button");
     copy.type = "button";
@@ -123,7 +137,11 @@ function renderResult() {
   });
 }
 function load(markdown, title, sourceUrl, label) {
+  clearTimeout(renderTimer);
+  renderTimer = null;
   editor.value = markdown;
+  previewSource = null;
+  $("markdown-preview").replaceChildren();
   baseline = markdown;
   currentTitle =
     title
@@ -153,7 +171,13 @@ $("clear-btn").addEventListener("click", () => {
   $("clear-btn").hidden = true;
   urlInput.focus();
 });
-editor.addEventListener("input", renderResult);
+editor.addEventListener("input", () => {
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(() => {
+    renderTimer = null;
+    renderResult();
+  }, 250);
+});
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!mayReplace()) return;

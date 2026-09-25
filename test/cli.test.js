@@ -89,3 +89,17 @@ test("CLI forwards cleanup choices and rejects invalid values", async () => {
     2,
   );
 });
+test("CLI rejects unknown, repeated, and misplaced arguments", async () => {
+  const output = io();
+  const convert = async () => {
+    throw new Error("conversion must not start");
+  };
+  for (const args of [
+    ["--full", "https://example.com/"],
+    ["https://example.com/", "--unknown"],
+    ["https://example.com/", "--full", "--full"],
+    ["https://example.com/", "https://other.example/"],
+  ]) {
+    assert.equal(await runCli(args, convert, output), 2);
+  }
+});

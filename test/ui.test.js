@@ -78,6 +78,11 @@ test("clear, options, editing, preview and save controls", async () => {
       .fill(
         "# Root\n\n- item\n  ## Nested\n  text\n\n~~~\n# fake\n~~~\n\n## Next\nend",
       );
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#result-details")
+        .textContent.includes("3 headings"),
+    );
     assert.match(
       await page.locator("#result-details").innerText(),
       /3 headings/,
@@ -117,6 +122,37 @@ test("clear, options, editing, preview and save controls", async () => {
     assert.match(
       await page.locator("#result-details").innerText(),
       /Local file.*1 headings/,
+    );
+    const nearLimit = `# Large\n${"word ".repeat(380_000)}`;
+    await page.locator("#open-file").setInputFiles({
+      name: "large.md",
+      mimeType: "text/markdown",
+      buffer: Buffer.from(nearLimit),
+    });
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#result-details")
+        .textContent.includes("380001 words"),
+    );
+    assert.equal(await page.locator("#markdown-preview").innerHTML(), "");
+    await page.locator("#markdown-output").evaluate((element) => {
+      element.value += "\n## End";
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#result-details")
+        .textContent.includes("2 headings"),
+    );
+    assert.equal(
+      await page.locator("#outline-items .outline-entry").count(),
+      2,
+    );
+    await page.locator("#outline-items .outline-item").nth(1).click();
+    assert.ok(
+      await page
+        .locator("#markdown-output")
+        .evaluate((element) => element.scrollTop),
     );
     await page.locator("#open-file").setInputFiles({
       name: "empty.md",

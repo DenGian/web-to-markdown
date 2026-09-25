@@ -18,43 +18,62 @@ function collect(tokens, result = []) {
 
 export function analyzeMarkdown(markdown) {
   const source = contentSource(markdown);
-  const parsed = collect(marked.lexer(source, { gfm: true }));
+  const tokens = marked.lexer(source, { gfm: true });
   const lines = [...source.matchAll(/[^\n]*(?:\n|$)/g)].filter(
     (match) => match[0],
   );
   const headings = [];
-  let nextLine = 0;
-  for (let index = 0; index < parsed.length; index++) {
-    const heading = parsed[index];
-    const needle = heading.raw.trim().split("\n")[0].trim();
-    const setext = /^.+\n[=-]+(?:\n|$)/.test(heading.raw.trim());
-    for (let line = nextLine; line < lines.length; line++) {
-      if (!lines[line][0].includes(needle)) continue;
-      const lastLine = setext ? line + 1 : line;
-      if (!lines[lastLine]) continue;
-      const end = lines[lastLine].index + lines[lastLine][0].length;
-      const found = collect(marked.lexer(source.slice(0, end), { gfm: true }));
-      if (
-        found.length !== index + 1 ||
-        found[index].depth !== heading.depth ||
-        found[index].text !== heading.text
-      )
-        continue;
-      headings.push({
-        text: heading.text,
-        level: heading.depth,
-        start: lines[line].index,
-        line,
-      });
-      nextLine = lastLine + 1;
-      break;
+  let headingCount = 0;
+  let offset = 0;
+  let line = 0;
+  for (const token of tokens) {
+    const end = offset + token.raw.length;
+    const parsed = collect([token]);
+    headingCount += parsed.length;
+    let pending = 0;
+    let fence = null;
+    while (line < lines.length && lines[line].index < end) {
+      const raw = lines[line][0];
+      // Container markers are removed by Marked before it lexes nested headings.
+      const content = raw
+        .replace(/^(?:\s*>\s*)+/, "")
+        .replace(/^\s*(?:[-+*]|\d+[.)])\s+/, "")
+        .trim();
+      const marker = content.match(/^(`{3,}|~{3,})/);
+      if (marker) {
+        if (!fence) fence = marker[1];
+        else if (marker[1][0] === fence[0] && marker[1].length >= fence.length)
+          fence = null;
+      } else if (!fence && pending < parsed.length) {
+        const heading = parsed[pending];
+        const needle = heading.raw.trim().split("\n")[0].trim();
+        const setext = /^.+\n[=-]+(?:\n|$)/.test(heading.raw.trim());
+        const underline = lines[line + 1]?.[0]
+          .replace(/^(?:\s*>\s*)+/, "")
+          .trim();
+        if (
+          content.startsWith(needle) &&
+          (!setext || /^[=-]+$/.test(underline || ""))
+        ) {
+          headings.push({
+            text: heading.text,
+            level: heading.depth,
+            start: lines[line].index,
+            line,
+          });
+          pending++;
+          if (setext) line++;
+        }
+      }
+      line++;
     }
+    offset = end;
   }
   return {
     headings,
     wordCount: (source.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || [])
       .length,
-    headingCount: parsed.length,
+    headingCount,
   };
 }
 

@@ -14,17 +14,36 @@ export async function runCli(
     );
     return args.includes("--help") ? 0 : 2;
   }
+  if (args[0].startsWith("--")) {
+    io.stderr.write("Provide a public URL first. Use --help for usage.\n");
+    return 2;
+  }
   const values = {};
-  for (const flag of ["--output", "--images", "--links"]) {
-    const index = args.indexOf(flag);
-    if (index >= 0) {
-      if (!args[index + 1] || args[index + 1].startsWith("--")) {
+  const switches = new Set();
+  for (let index = 1; index < args.length; index++) {
+    const flag = args[index];
+    if (["--output", "--images", "--links"].includes(flag)) {
+      if (
+        values[flag] !== undefined ||
+        !args[index + 1] ||
+        args[index + 1].startsWith("--")
+      ) {
         io.stderr.write(
-          `${flag} requires a ${flag === "--output" ? "filename" : "value"}.\n`,
+          `${flag} requires a ${flag === "--output" ? "filename" : "value"} and may appear once.\n`,
         );
         return 2;
       }
-      values[flag] = args[index + 1];
+      values[flag] = args[++index];
+    } else if (
+      ["--full", "--no-front-matter"].includes(flag) &&
+      !switches.has(flag)
+    ) {
+      switches.add(flag);
+    } else {
+      io.stderr.write(
+        `Unknown or repeated option: ${flag}. Use --help for usage.\n`,
+      );
+      return 2;
     }
   }
   if (

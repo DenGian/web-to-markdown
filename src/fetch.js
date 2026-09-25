@@ -57,7 +57,7 @@ export function requestOnce(url, address, family, budget, options) {
           else callback(null, address, family);
         },
         headers: {
-          "user-agent": "WebToMD/1.1 (+single-page converter)",
+          "user-agent": "WebToMD/1.0 (+single-page converter)",
           accept: options.accept || "*/*",
           "accept-encoding": "identity",
         },
