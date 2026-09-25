@@ -1,6 +1,6 @@
-# v1.0.1
+# v1.0.2
 
-This patch fixes Copy section and heading navigation immediately after an edit, before the outline refreshes. It also updates the README desktop screenshot to show the actual Split view.
+This patch keeps Copy section and heading navigation on the original section when edits occur just before the outline refresh. If a stale button cannot be matched confidently, the outline refreshes without acting.
 
 Run locally with Node.js 22.13+, 24, or 26:
 

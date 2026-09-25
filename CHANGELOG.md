@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2 — 2026-09-25
+
+- Match stale outline actions to their original section after edits, including inserted duplicate or renamed headings; refresh without acting when the match is uncertain.
+
 ## 1.0.1 — 2026-09-25
 
 - Use current editor positions for Copy section and heading navigation immediately after edits.

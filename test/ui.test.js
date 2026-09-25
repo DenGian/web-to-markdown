@@ -63,6 +63,166 @@ test("outline actions use current positions before the debounce", async () => {
   }
 });
 
+test("stale outline buttons identify their section or refresh without acting", async () => {
+  const server = createApp(async () => ({
+    title: "Outline",
+    url: "https://example.com/",
+    extractionMode: "article",
+    warnings: [],
+    markdown: "# Outline",
+  })).listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  let browser;
+  try {
+    browser = await chromium.launch();
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        value: {
+          writeText: async (value) => {
+            window.__copied = value;
+          },
+        },
+      });
+    });
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    let loadCount = 0;
+    const load = async (markdown) => {
+      const name = `outline-${++loadCount}`;
+      await page.locator("#open-file").setInputFiles({
+        name: `${name}.md`,
+        mimeType: "text/markdown",
+        buffer: Buffer.from(markdown),
+      });
+      await page.waitForFunction(
+        ({ expected, name }) =>
+          document.querySelector("#markdown-output").value === expected &&
+          document.querySelector("#output-title").textContent === name,
+        { expected: markdown, name },
+      );
+    };
+    const actBeforeRefresh = (markdown, button, index) =>
+      page.evaluate(
+        async ({ markdown, button, index }) => {
+          const editor = document.querySelector("#markdown-output");
+          window.__copied = "unchanged";
+          window.__scrolled = "unchanged";
+          editor.setSelectionRange(0, 0);
+          editor.value = markdown;
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+          document.querySelectorAll(button)[index].click();
+          await Promise.resolve();
+          return {
+            copied: window.__copied,
+            selected: editor.value.slice(
+              editor.selectionStart,
+              editor.selectionEnd,
+            ),
+            scrolled: window.__scrolled,
+            outline: [...document.querySelectorAll(".outline-item")].map(
+              (item) => item.textContent,
+            ),
+          };
+        },
+        { markdown, button, index },
+      );
+
+    const original =
+      "# Root\n\n## Target\noriginal body\n\n## Target\nlater body";
+    const inserted =
+      "# Root\n\n## Target\ninserted body\n\n## Target\noriginal body\n\n## Target\nlater body";
+    await load(original);
+    assert.deepEqual(await actBeforeRefresh(inserted, ".outline-copy", 1), {
+      copied: "## Target\noriginal body",
+      selected: "",
+      scrolled: "unchanged",
+      outline: ["Root", "Target", "Target"],
+    });
+
+    await load(original);
+    assert.equal(
+      (await actBeforeRefresh(inserted, ".outline-item", 1)).selected,
+      "## Target",
+    );
+    assert.equal(
+      await page
+        .locator("#markdown-output")
+        .evaluate((editor) =>
+          editor.value.slice(editor.selectionEnd).startsWith("\noriginal body"),
+        ),
+      true,
+    );
+
+    await load(original);
+    await page.locator("#tab-split").click();
+    const preview = await page.evaluate(
+      async ({ markdown }) => {
+        const editor = document.querySelector("#markdown-output");
+        editor.value = markdown;
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+        Element.prototype.scrollIntoView = function () {
+          window.__scrolled = this.nextElementSibling?.textContent;
+        };
+        document.querySelectorAll(".outline-item")[1].click();
+        return window.__scrolled;
+      },
+      { markdown: inserted },
+    );
+    assert.equal(preview, "original body");
+
+    await load(original);
+    const renamed =
+      "# Root\n\n## Renamed\noriginal body\n\n## Target\nlater body";
+    assert.equal(
+      (await actBeforeRefresh(renamed, ".outline-copy", 1)).copied,
+      "## Renamed\noriginal body",
+    );
+    await load(original);
+    await page.locator("#tab-source").click();
+    const renamedNavigation = await actBeforeRefresh(
+      renamed,
+      ".outline-item",
+      1,
+    );
+    assert.equal(renamedNavigation.selected, "## Renamed");
+
+    await load(original);
+    const before = "introduction\n\n" + original;
+    assert.equal(
+      (await actBeforeRefresh(before, ".outline-copy", 1)).copied,
+      "## Target\noriginal body",
+    );
+
+    await load(original);
+    const removed = "# Root\n\n## Target\nlater body";
+    assert.deepEqual(await actBeforeRefresh(removed, ".outline-copy", 1), {
+      copied: "unchanged",
+      selected: "",
+      scrolled: "unchanged",
+      outline: ["Root", "Target"],
+    });
+    await load(original);
+    assert.deepEqual(await actBeforeRefresh(removed, ".outline-item", 1), {
+      copied: "unchanged",
+      selected: "",
+      scrolled: "unchanged",
+      outline: ["Root", "Target"],
+    });
+
+    const identical = "# Root\n\n## Target\nsame body\n\n## Target\nsame body";
+    await load(identical);
+    const duplicated =
+      "# Root\n\n## Target\nsame body\n\n## Target\nsame body\n\n## Target\nsame body";
+    assert.equal(
+      (await actBeforeRefresh(duplicated, ".outline-copy", 1)).copied,
+      "unchanged",
+    );
+  } finally {
+    if (browser) await browser.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("clear, options, editing, preview and save controls", async () => {
   const server = createApp(async (_url, options) => ({
     title: "Example title",

@@ -104,6 +104,7 @@ function renderResult() {
     jump.setAttribute("aria-label", `Go to ${jump.textContent}`);
     jump.addEventListener("click", () => {
       const { items, position } = currentHeading(heading, index);
+      if (position < 0) return renderResult();
       const target = items[position];
       if (!target) return;
       if (activeView === "source") {
@@ -131,7 +132,7 @@ function renderResult() {
     copy.addEventListener("click", async () => {
       try {
         const { items, position } = currentHeading(heading, index);
-        if (!items[position]) return;
+        if (position < 0) return renderResult();
         await navigator.clipboard.writeText(
           sectionMarkdown(editor.value, items, position),
         );
@@ -154,17 +155,42 @@ function currentHeading(heading, index) {
     actionSource = editor.value;
     actionHeadings = analyzeMarkdown(editor.value).headings;
   }
-  const same = (item) =>
-    item.text === heading.text && item.level === heading.level;
-  const occurrence = headings.slice(0, index + 1).filter(same).length;
-  let seen = 0;
-  const match = actionHeadings.findIndex(
-    (item) => same(item) && ++seen === occurrence,
-  );
-  return {
-    items: actionHeadings,
-    position: match < 0 ? index : match,
+  const section = (source, items, position) => {
+    const start = items[position].start;
+    let end = source.length;
+    for (let i = position + 1; i < items.length; i++) {
+      if (items[i].level <= items[position].level) {
+        end = items[i].start;
+        break;
+      }
+    }
+    return source.slice(start, end).trimEnd();
   };
+  const body = (source, items, position) => {
+    const value = section(source, items, position);
+    const lineEnd = value.indexOf("\n");
+    return lineEnd < 0 ? "" : value.slice(lineEnd + 1).trim();
+  };
+  const oldSection = section(headingsSource, headings, index);
+  const oldBody = body(headingsSource, headings, index);
+  const uniqueMatch = (value, extract) => {
+    if (
+      !value ||
+      headings.filter((_, i) => extract(headingsSource, headings, i) === value)
+        .length !== 1
+    )
+      return -1;
+    const matches = actionHeadings.flatMap((item, i) =>
+      item.level === heading.level &&
+      extract(editor.value, actionHeadings, i) === value
+        ? [i]
+        : [],
+    );
+    return matches.length === 1 ? matches[0] : -1;
+  };
+  let position = uniqueMatch(oldSection, section);
+  if (position < 0 && oldBody) position = uniqueMatch(oldBody, body);
+  return { items: actionHeadings, position };
 }
 function load(markdown, title, sourceUrl, label) {
   clearTimeout(renderTimer);
