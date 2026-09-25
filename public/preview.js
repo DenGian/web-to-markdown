@@ -1,33 +1,47 @@
-// A deliberately small Markdown preview. All input is escaped before formatting;
-// only HTTP(S) links and images become clickable elements.
-const escapeHtml = (value) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-function safeUrl(value) {
-  try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? escapeHtml(url.href) : null; }
-  catch { return null; }
-}
-function inline(value) {
-  let result = escapeHtml(value);
-  result = result.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, (_match, alt, url) => safeUrl(url) ? `<img src="${safeUrl(url)}" alt="${alt}">` : alt);
-  result = result.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label, url) => safeUrl(url) ? `<a href="${safeUrl(url)}" target="_blank" rel="noopener noreferrer">${label}</a>` : label);
-  result = result.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  return result;
-}
-export function renderPreview(markdown) {
-  const lines = markdown.replace(/^---\n[\s\S]*?\n---\n/, '').split('\n');
-  const out = [];
-  let code = false;
-  let list = false;
-  for (const line of lines) {
-    if (/^`{3,}/.test(line)) { if (list) { out.push('</ul>'); list = false; } out.push(code ? '</code></pre>' : '<pre><code>'); code = !code; continue; }
-    if (code) { out.push(`${escapeHtml(line)}\n`); continue; }
-    const heading = line.match(/^(#{1,6})\s+(.+)/);
-    if (heading) { if (list) { out.push('</ul>'); list = false; } const n = heading[1].length; out.push(`<h${n}>${inline(heading[2])}</h${n}>`); continue; }
-    const item = line.match(/^[-*]\s+(.+)/);
-    if (item) { if (!list) { out.push('<ul>'); list = true; } out.push(`<li>${inline(item[1])}</li>`); continue; }
-    if (list) { out.push('</ul>'); list = false; }
-    if (line.trim()) out.push(`<p>${inline(line)}</p>`);
+import { marked } from "./vendor/marked.esm.js";
+import createDOMPurify from "./vendor/purify.es.mjs";
+
+const escapeHtml = (value) =>
+  String(value).replace(
+    /[&<>"']/g,
+    (character) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        character
+      ],
+  );
+
+const renderer = {
+  image({ text, href }) {
+    const label = text || "Untitled image";
+    return `<span class="image-placeholder" title="${escapeHtml(href)}">Image: ${escapeHtml(label)}</span>`;
+  },
+};
+marked.use({ renderer });
+
+export function renderPreview(markdown, documentObject = globalThis.document) {
+  const source = markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
+  const html = marked.parse(source, { gfm: true });
+  const purify = createDOMPurify(documentObject.defaultView);
+  const clean = purify.sanitize(html, {
+    FORBID_TAGS: ["img", "svg", "math", "iframe", "form", "style"],
+  });
+  const template = documentObject.createElement("template");
+  template.innerHTML = clean;
+  for (const link of template.content.querySelectorAll("a")) {
+    const href = link.getAttribute("href");
+    let allowed = false;
+    try {
+      const url = new URL(href);
+      allowed = ["http:", "https:"].includes(url.protocol);
+    } catch {
+      allowed = href?.startsWith("#") && !href.startsWith("#javascript:");
+    }
+    if (!allowed) {
+      link.replaceWith(documentObject.createTextNode(link.textContent));
+      continue;
+    }
+    link.setAttribute("rel", "noopener noreferrer");
+    if (!href.startsWith("#")) link.setAttribute("target", "_blank");
   }
-  if (list) out.push('</ul>');
-  if (code) out.push('</code></pre>');
-  return out.join('');
+  return template.innerHTML;
 }

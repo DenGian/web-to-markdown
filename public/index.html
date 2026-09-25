@@ -1,129 +1,219 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Website → Markdown</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Website → Markdown</title>
 
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
-  <!-- =====================================================================
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- =====================================================================
        Header
   ====================================================================== -->
-  <header class="app-header">
-    <div class="header-inner">
-      <div class="logo">
-        <span class="logo-icon" aria-hidden="true">⬇</span>
-        <span class="logo-text">Web<span class="logo-accent">→</span>MD</span>
+    <header class="app-header">
+      <div class="header-inner">
+        <div class="logo">
+          <span class="logo-text"
+            >Website <span class="logo-accent">→</span> Markdown</span
+          >
+        </div>
+        <p class="header-tagline">A quiet space for page conversion</p>
       </div>
-      <p class="header-tagline">Turn a public web page into editable Markdown</p>
-    </div>
-  </header>
+    </header>
 
-  <!-- =====================================================================
+    <!-- =====================================================================
        Main content
   ====================================================================== -->
-  <main class="app-main">
-
-    <!-- URL Input card -->
-    <section class="card input-card" aria-label="URL input">
-      <form id="convert-form" autocomplete="off">
-        <div class="input-row">
-          <label for="url-input" class="sr-only">Webpage URL</label>
-          <div class="input-wrapper">
-            <span class="input-icon" aria-hidden="true">🔗</span>
-            <input
-              id="url-input"
-              type="url"
-              name="url"
-              placeholder="https://example.com/article"
-              required
-              spellcheck="false"
-              autocomplete="off"
-            />
-            <button type="button" id="clear-btn" class="clear-btn" aria-label="Clear URL" hidden>✕</button>
+    <main class="app-main">
+      <!-- URL Input card -->
+      <section class="card input-card" aria-label="URL input">
+        <form id="convert-form" autocomplete="off">
+          <div class="input-row">
+            <label for="url-input" class="input-label">Page URL</label>
+            <div class="input-wrapper">
+              <input
+                id="url-input"
+                type="url"
+                name="url"
+                placeholder="https://example.com/article"
+                required
+                spellcheck="false"
+                autocomplete="off"
+              />
+              <button
+                type="button"
+                id="clear-btn"
+                class="clear-btn"
+                aria-label="Clear URL"
+                hidden
+              >
+                Clear
+              </button>
+            </div>
+            <button type="submit" id="convert-btn" class="btn btn-primary">
+              <span class="btn-label">Convert</span>
+              <span class="btn-spinner" aria-hidden="true" hidden></span>
+            </button>
           </div>
-          <button type="submit" id="convert-btn" class="btn btn-primary">
-            <span class="btn-label">Convert</span>
-            <span class="btn-spinner" aria-hidden="true" hidden></span>
+          <div class="options-row">
+            <label for="mode-select">Content</label>
+            <select id="mode-select">
+              <option value="article">Article only</option>
+              <option value="full">Full page</option>
+            </select>
+            <label class="checkbox-option"
+              ><input id="front-matter" type="checkbox" checked /> Include front
+              matter</label
+            >
+            <label for="images-select">Images</label>
+            <select id="images-select">
+              <option value="retain">Keep Markdown</option>
+              <option value="alt">Use alt text</option>
+              <option value="omit">Omit</option>
+            </select>
+            <label for="links-select">Links</label>
+            <select id="links-select">
+              <option value="retain">Keep URLs</option>
+              <option value="text">Text only</option>
+            </select>
+          </div>
+          <p class="input-hint">
+            Use a public HTTP or HTTPS URL. Some sites may block automated
+            browsers.
+          </p>
+        </form>
+        <div class="open-row">
+          <button type="button" id="open-btn" class="btn btn-secondary">
+            Open Markdown file
+          </button>
+          <input
+            id="open-file"
+            type="file"
+            accept=".md,text/markdown,text/plain"
+            hidden
+            aria-label="Choose Markdown file"
+          />
+        </div>
+      </section>
+
+      <!-- Status / error banner (hidden until needed) -->
+      <div
+        id="status-banner"
+        class="status-banner"
+        role="alert"
+        aria-live="polite"
+        hidden
+      >
+        <span id="status-message"></span>
+      </div>
+
+      <!-- Output card (hidden until a conversion succeeds) -->
+      <section
+        id="output-card"
+        class="card output-card"
+        aria-label="Conversion output"
+        hidden
+      >
+        <!-- Meta row: title + action buttons -->
+        <div class="output-header">
+          <div class="output-meta">
+            <h2 id="output-title" class="output-title"></h2>
+            <a
+              id="output-source-link"
+              class="output-source"
+              href="#"
+              target="_blank"
+              rel="noopener noreferrer"
+            ></a>
+          </div>
+          <div class="output-actions">
+            <button
+              id="copy-btn"
+              class="btn btn-secondary"
+              title="Copy Markdown to clipboard"
+            >
+              Copy
+            </button>
+            <button
+              id="download-btn"
+              class="btn btn-secondary"
+              title="Save as .md file"
+            >
+              Save as .md
+            </button>
+          </div>
+        </div>
+        <div
+          class="result-details"
+          id="result-details"
+          aria-label="Conversion details"
+        ></div>
+        <p class="result-warning" id="result-warning" hidden></p>
+        <nav
+          class="outline"
+          aria-label="Heading outline"
+          id="heading-outline"
+          hidden
+        >
+          <span class="outline-label">Outline</span>
+          <div id="outline-items"></div>
+        </nav>
+
+        <!-- Tab switcher -->
+        <div class="tabs" role="tablist" aria-label="View mode">
+          <button
+            id="tab-source"
+            class="tab tab-active"
+            role="tab"
+            aria-selected="true"
+            aria-controls="split-view"
+          >
+            Source
+          </button>
+          <button
+            id="tab-preview"
+            class="tab"
+            role="tab"
+            aria-selected="false"
+            aria-controls="split-view"
+          >
+            Preview
+          </button>
+          <button
+            id="tab-split"
+            class="tab"
+            role="tab"
+            aria-selected="false"
+            aria-controls="split-view"
+          >
+            Split
           </button>
         </div>
-        <div class="options-row">
-          <label for="mode-select">Content</label>
-          <select id="mode-select"><option value="article">Article only</option><option value="full">Full page</option></select>
-          <label class="checkbox-option"><input id="front-matter" type="checkbox" checked /> Include front matter</label>
+        <div
+          id="split-view"
+          class="view-grid"
+          role="tabpanel"
+          aria-labelledby="tab-source"
+        >
+          <div id="panel-source" class="panel">
+            <label for="markdown-output" class="sr-only">Edit Markdown</label
+            ><textarea
+              id="markdown-output"
+              class="markdown-source"
+              spellcheck="false"
+              aria-label="Edit Markdown"
+            ></textarea>
+          </div>
+
+          <!-- Preview panel (rendered HTML from Markdown) -->
+          <div id="panel-preview" class="panel" hidden>
+            <div id="markdown-preview" class="markdown-preview prose"></div>
+          </div>
         </div>
-        <p class="input-hint">Use a public HTTP or HTTPS URL. Some sites may block automated browsers.</p>
-      </form>
-    </section>
+      </section>
+    </main>
 
-    <!-- Status / error banner (hidden until needed) -->
-    <div id="status-banner" class="status-banner" role="alert" aria-live="polite" hidden>
-      <span id="status-icon" class="status-icon" aria-hidden="true"></span>
-      <span id="status-message"></span>
-    </div>
-
-    <!-- Output card (hidden until a conversion succeeds) -->
-    <section id="output-card" class="card output-card" aria-label="Conversion output" hidden>
-
-      <!-- Meta row: title + action buttons -->
-      <div class="output-header">
-        <div class="output-meta">
-          <h2 id="output-title" class="output-title"></h2>
-          <a id="output-source-link" class="output-source" href="#" target="_blank" rel="noopener noreferrer"></a>
-        </div>
-        <div class="output-actions">
-          <button id="copy-btn" class="btn btn-secondary" title="Copy Markdown to clipboard">
-            <span class="btn-icon" aria-hidden="true">📋</span>
-            Copy
-          </button>
-          <button id="download-btn" class="btn btn-secondary" title="Save as .md file">
-            <span class="btn-icon" aria-hidden="true">💾</span>
-            Save as .md
-          </button>
-        </div>
-      </div>
-
-      <!-- Tab switcher -->
-      <div class="tabs" role="tablist" aria-label="View mode">
-        <button
-          id="tab-source"
-          class="tab tab-active"
-          role="tab"
-          aria-selected="true"
-          aria-controls="panel-source"
-        >Source</button>
-        <button
-          id="tab-preview"
-          class="tab"
-          role="tab"
-          aria-selected="false"
-          aria-controls="panel-preview"
-        >Preview</button>
-      </div>
-
-      <!-- Source panel -->
-      <div id="panel-source" class="panel" role="tabpanel" aria-labelledby="tab-source">
-        <label for="markdown-output" class="sr-only">Edit Markdown</label><textarea id="markdown-output" class="markdown-source" spellcheck="false" aria-label="Edit Markdown"></textarea>
-      </div>
-
-      <!-- Preview panel (rendered HTML from Markdown) -->
-      <div id="panel-preview" class="panel" role="tabpanel" hidden aria-labelledby="tab-preview">
-        <div id="markdown-preview" class="markdown-preview prose"></div>
-      </div>
-
-    </section>
-
-  </main>
-
-  <!-- =====================================================================
-       Footer
-  ====================================================================== -->
-  <footer class="app-footer">
-    <p>The server fetches submitted URLs. Avoid private links or sensitive content.</p>
-  </footer>
-
-  <script src="app.js" type="module"></script>
-</body>
+    <script src="app.js" type="module"></script>
+  </body>
 </html>

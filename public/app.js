@@ -1,94 +1,283 @@
-import { renderPreview } from './preview.js';
+import { renderPreview } from "./preview.js";
+import { analyzeMarkdown, sectionMarkdown } from "./document.js";
 
 const $ = (id) => document.getElementById(id);
-const form = $('convert-form');
-const urlInput = $('url-input');
-const clearBtn = $('clear-btn');
-const convertBtn = $('convert-btn');
-const statusBanner = $('status-banner');
-const outputCard = $('output-card');
-const editor = $('markdown-output');
-let currentTitle = 'output';
+const form = $("convert-form");
+const urlInput = $("url-input");
+const editor = $("markdown-output");
+const statusBanner = $("status-banner");
+const outputCard = $("output-card");
+let currentTitle = "output";
+let baseline = "";
+let origin = "";
+let headings = [];
+let activeView = "source";
 
-urlInput.addEventListener('input', () => { clearBtn.hidden = !urlInput.value; });
-clearBtn.addEventListener('click', () => { urlInput.value = ''; clearBtn.hidden = true; urlInput.focus(); });
-editor.addEventListener('input', () => { $('markdown-preview').innerHTML = renderPreview(editor.value); });
 function status(type, message) {
   statusBanner.hidden = false;
   statusBanner.className = `status-banner status-${type}`;
-  $('status-icon').textContent = type === 'error' ? '!' : type === 'loading' ? '…' : '✓';
-  $('status-message').textContent = message;
+  $("status-message").textContent = message;
 }
-function tab(which) {
-  const source = which === 'source';
-  $('tab-source').classList.toggle('tab-active', source);
-  $('tab-preview').classList.toggle('tab-active', !source);
-  $('tab-source').setAttribute('aria-selected', String(source));
-  $('tab-preview').setAttribute('aria-selected', String(!source));
-  $('panel-source').hidden = !source;
-  $('panel-preview').hidden = source;
-  (source ? $('tab-source') : $('tab-preview')).focus();
+function changed() {
+  return !outputCard.hidden && editor.value !== baseline;
 }
-$('tab-source').addEventListener('click', () => tab('source'));
-$('tab-preview').addEventListener('click', () => tab('preview'));
-for (const id of ['tab-source', 'tab-preview']) {
-  $(id).addEventListener('keydown', (event) => {
-    if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
-      event.preventDefault();
-      tab(id === 'tab-source' ? 'preview' : 'source');
-    }
+function mayReplace() {
+  return !changed() || window.confirm("Discard unsaved Markdown edits?");
+}
+function view(which, focus = true) {
+  activeView =
+    which === "split" && matchMedia("(max-width: 700px)").matches
+      ? "source"
+      : which;
+  for (const name of ["source", "preview", "split"]) {
+    const tab = $(`tab-${name}`);
+    tab.classList.toggle("tab-active", name === activeView);
+    tab.setAttribute("aria-selected", String(name === activeView));
+    tab.tabIndex = name === activeView ? 0 : -1;
+  }
+  $("panel-source").hidden = activeView === "preview";
+  $("panel-preview").hidden = activeView === "source";
+  $("split-view").classList.toggle("is-split", activeView === "split");
+  $("split-view").setAttribute("aria-labelledby", `tab-${activeView}`);
+  if (focus) $(`tab-${activeView}`).focus();
+}
+for (const name of ["source", "preview", "split"]) {
+  $(`tab-${name}`).addEventListener("click", () => view(name));
+  $(`tab-${name}`).addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const choices = matchMedia("(max-width: 700px)").matches
+      ? ["source", "preview"]
+      : ["source", "preview", "split"];
+    const current = choices.indexOf(activeView);
+    const next =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? choices.length - 1
+          : (current + (event.key === "ArrowRight" ? 1 : -1) + choices.length) %
+            choices.length;
+    view(choices[next]);
   });
 }
-form.addEventListener('submit', async (event) => {
+matchMedia("(max-width: 700px)").addEventListener("change", () => {
+  if (activeView === "split") view("source", false);
+});
+
+function renderResult() {
+  const preview = $("markdown-preview");
+  preview.innerHTML = renderPreview(editor.value);
+  const stats = analyzeMarkdown(editor.value);
+  headings = stats.headings;
+  $("result-details").textContent =
+    `${origin} · ${stats.wordCount} words · ${stats.headingCount} headings${$("output-source-link").hidden ? "" : ` · Final URL: ${$("output-source-link").href}`}`;
+  const items = $("outline-items");
+  items.replaceChildren();
+  $("heading-outline").hidden = headings.length === 0;
+  const previewHeadings = preview.querySelectorAll("h1, h2, h3, h4, h5, h6");
+  headings.forEach((heading, index) => {
+    const group = document.createElement("div");
+    group.className = `outline-entry outline-level-${heading.level}`;
+    const jump = document.createElement("button");
+    jump.type = "button";
+    jump.className = "outline-item";
+    jump.textContent = previewHeadings[index]?.textContent || heading.text;
+    jump.setAttribute("aria-label", `Go to ${jump.textContent}`);
+    jump.addEventListener("click", () => {
+      if (activeView === "source") {
+        editor.focus();
+        const end = editor.value.indexOf("\n", heading.start);
+        editor.setSelectionRange(
+          heading.start,
+          end < 0 ? editor.value.length : end,
+        );
+        editor.scrollTop =
+          heading.line *
+          parseFloat(getComputedStyle(editor).lineHeight || "20");
+      } else
+        previewHeadings[index]?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+    });
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "outline-copy";
+    copy.textContent = "Copy section";
+    copy.setAttribute("aria-label", `Copy section: ${jump.textContent}`);
+    copy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(
+          sectionMarkdown(editor.value, headings, index),
+        );
+        status("success", `Copied section: ${jump.textContent}.`);
+      } catch {
+        status(
+          "error",
+          "Clipboard access failed. Select and copy the section instead.",
+        );
+      }
+    });
+    group.append(jump, copy);
+    items.append(group);
+  });
+}
+function load(markdown, title, sourceUrl, label) {
+  editor.value = markdown;
+  baseline = markdown;
+  currentTitle =
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .slice(0, 60) || "output";
+  $("output-title").textContent = title;
+  const link = $("output-source-link");
+  link.hidden = !sourceUrl;
+  if (sourceUrl) {
+    link.textContent = sourceUrl;
+    link.href = sourceUrl;
+  } else link.removeAttribute("href");
+  origin = label;
+  $("result-warning").hidden = true;
+  view("source", false);
+  outputCard.hidden = false;
+  renderResult();
+}
+urlInput.addEventListener("input", () => {
+  $("clear-btn").hidden = !urlInput.value;
+});
+$("clear-btn").addEventListener("click", () => {
+  urlInput.value = "";
+  $("clear-btn").hidden = true;
+  urlInput.focus();
+});
+editor.addEventListener("input", renderResult);
+form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  outputCard.hidden = true;
+  if (!mayReplace()) return;
+  const convertBtn = $("convert-btn");
   convertBtn.disabled = true;
-  $('front-matter').disabled = true;
-  $('mode-select').disabled = true;
-  $('url-input').disabled = true;
-  convertBtn.querySelector('.btn-label').hidden = true;
-  convertBtn.querySelector('.btn-spinner').hidden = false;
-  status('loading', 'Fetching and converting this page…');
+  for (const id of [
+    "front-matter",
+    "mode-select",
+    "images-select",
+    "links-select",
+    "url-input",
+  ])
+    $(id).disabled = true;
+  convertBtn.querySelector(".btn-label").hidden = true;
+  convertBtn.querySelector(".btn-spinner").hidden = false;
+  status("loading", "Fetching and converting this page…");
   try {
-    const response = await fetch('/api/convert', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: urlInput.value.trim(), mode: $('mode-select').value, frontMatter: $('front-matter').checked }) });
+    const response = await fetch("/api/convert", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        url: urlInput.value.trim(),
+        mode: $("mode-select").value,
+        frontMatter: $("front-matter").checked,
+        images: $("images-select").value,
+        links: $("links-select").value,
+      }),
+    });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Conversion failed.');
-    currentTitle = (result.title || 'output').toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'output';
-    $('output-title').textContent = result.title;
-    $('output-source-link').textContent = result.url;
-    $('output-source-link').href = result.url;
-    editor.value = result.markdown;
-    $('markdown-preview').innerHTML = renderPreview(editor.value);
-    tab('source');
-    outputCard.hidden = false;
-    status('success', 'Converted. You can edit the Markdown before copying or saving.');
-  } catch (error) { status('error', error.message || 'Conversion failed.'); }
-  finally {
+    if (!response.ok) throw new Error(result.error || "Conversion failed.");
+    load(
+      result.markdown,
+      result.title,
+      result.url,
+      result.extractionMode === "body"
+        ? "Body fallback"
+        : result.extractionMode === "full"
+          ? "Full page"
+          : "Article",
+    );
+    $("result-warning").textContent = (result.warnings || []).join(" ");
+    $("result-warning").hidden = !result.warnings?.length;
+    status(
+      "success",
+      "Converted. You can edit the Markdown before copying or saving.",
+    );
+  } catch (error) {
+    status("error", error.message || "Conversion failed.");
+  } finally {
     convertBtn.disabled = false;
-    $('front-matter').disabled = false;
-    $('mode-select').disabled = false;
-    $('url-input').disabled = false;
-    convertBtn.querySelector('.btn-label').hidden = false;
-    convertBtn.querySelector('.btn-spinner').hidden = true;
+    for (const id of [
+      "front-matter",
+      "mode-select",
+      "images-select",
+      "links-select",
+      "url-input",
+    ])
+      $(id).disabled = false;
+    convertBtn.querySelector(".btn-label").hidden = false;
+    convertBtn.querySelector(".btn-spinner").hidden = true;
   }
 });
-$('copy-btn').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText(editor.value); status('success', 'Edited Markdown copied.'); }
-  catch { status('error', 'Clipboard access failed. Select and copy the Markdown instead.'); }
+$("open-btn").addEventListener("click", () => {
+  if (mayReplace()) $("open-file").click();
 });
-$('download-btn').addEventListener('click', async () => {
-  const name = `${currentTitle}.md`;
+$("open-file").addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  if (!/\.md$/i.test(file.name)) return status("error", "Choose a .md file.");
+  if (!file.size) return status("error", "The Markdown file is empty.");
+  if (file.size > 2_000_000)
+    return status("error", "The Markdown file exceeds the 2 MB limit.");
+  try {
+    const markdown = new TextDecoder("utf-8", { fatal: true }).decode(
+      await file.arrayBuffer(),
+    );
+    if (!markdown.trim() || markdown.includes("\0")) throw new Error("invalid");
+    load(markdown, file.name.replace(/\.md$/i, ""), "", "Local file");
+    status("success", "Markdown file opened locally.");
+  } catch {
+    status("error", "Could not read this file as UTF-8 Markdown.");
+  }
+});
+$("copy-btn").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(editor.value);
+    status("success", "Markdown copied.");
+  } catch {
+    status(
+      "error",
+      "Clipboard access failed. Select and copy the Markdown instead.",
+    );
+  }
+});
+$("download-btn").addEventListener("click", async () => {
   try {
     if (window.showSaveFilePicker) {
-      const handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }] });
+      const handle = await window.showSaveFilePicker({
+        suggestedName: `${currentTitle}.md`,
+        types: [
+          { description: "Markdown", accept: { "text/markdown": [".md"] } },
+        ],
+      });
       const writable = await handle.createWritable();
       await writable.write(editor.value);
       await writable.close();
     } else {
-      const url = URL.createObjectURL(new Blob([editor.value], { type: 'text/markdown' }));
-      const link = document.createElement('a'); link.href = url; link.download = name; link.click();
+      const url = URL.createObjectURL(
+        new Blob([editor.value], { type: "text/markdown" }),
+      );
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${currentTitle}.md`;
+      link.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     }
-    status('success', 'Markdown saved.');
-  } catch (error) { if (error.name !== 'AbortError') status('error', 'Could not save the file.'); }
+    baseline = editor.value;
+    status("success", "Markdown saved.");
+  } catch (error) {
+    if (error.name !== "AbortError")
+      status("error", "Could not save the file.");
+  }
+});
+window.addEventListener("beforeunload", (event) => {
+  if (changed()) event.preventDefault();
 });
