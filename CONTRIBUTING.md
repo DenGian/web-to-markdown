@@ -1,3 +1,5 @@
 # Contributing
 
-Use Node.js 20+ and install Chromium with `npm run install:browser`. Keep changes focused on single page conversion. Add local fixtures for parsing or security cases and run `npm run check` before opening a pull request. Explain behavior changes and any network or resource implications in the PR. Avoid live site dependencies in CI. Run `npm run format` for whitespace normalization.
+Use Node.js 22.13+, 24, or 26. Run `npm ci` and `npm run install:browser`, then `npm run check` before opening a pull request. Run `npm run format` when editing JavaScript, CSS, or HTML.
+
+Keep changes focused on local, single page conversion. Add fixtures for parsing, UI, or security changes. Explain behavior changes and network or resource implications in a pull request. CI uses local fixtures and does not depend on live websites.

@@ -1,5 +1,5 @@
 # Security
 
-Please report vulnerabilities privately through GitHub's private vulnerability reporting for this repository, if enabled, or contact the repository owner privately. Do not publish exploit details before a fix is available.
+Please report vulnerabilities through this repository's private vulnerability reporting. Include a reproducible case and affected version; avoid posting exploit details in a public issue before a fix is available.
 
-The URL, redirects, browser requests, and page content are untrusted. Public deployments require worker isolation, egress filtering against private and metadata IP ranges, hard process memory limits, TLS, and external rate limiting. Review the README security section before hosting the API. Do not send credentials or private URLs to a hosted instance.
+The app is designed for local use. It validates submitted public URLs, redirects, and browser requests, but page content remains untrusted. Preview sanitizes rendered Markdown. Run the server on a trusted machine and keep dependencies updated. Public hosting requires additional network and process isolation beyond this local release.

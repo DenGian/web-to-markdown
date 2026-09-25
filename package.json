@@ -9,7 +9,7 @@
     "dev": "node --watch src/server.js",
     "install:browser": "npx playwright install chromium",
     "test": "node --test test/*.test.js",
-    "lint": "eslint src public/app.js public/preview.js test scripts",
+    "lint": "eslint src public/app.js public/document.js public/preview.js test scripts",
     "format": "prettier --write 'src/**/*.js' 'public/*.{js,css,html}' 'test/**/*.js' 'scripts/**/*.js' eslint.config.js",
     "format:check": "prettier --check 'src/**/*.js' 'public/*.{js,css,html}' 'test/**/*.js' 'scripts/**/*.js' eslint.config.js",
     "check": "npm run lint && npm run format:check && npm test"
@@ -26,14 +26,14 @@
     "turndown-plugin-gfm": "^1.0.2"
   },
   "engines": {
-    "node": "^22.0.0 || ^24.0.0 || ^26.0.0"
+    "node": "^22.13.0 || ^24.0.0 || ^26.0.0"
   },
   "license": "MIT",
   "bin": {
     "web-to-md": "./src/cli.js"
   },
   "devDependencies": {
-    "eslint": "^9.39.5",
+    "eslint": "^10.11.0",
     "prettier": "^3.9.9"
   }
 }

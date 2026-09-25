@@ -1,13 +1,28 @@
-# v1.0.0 local release candidate
+# v1.0.0 — local release
 
-The app is ready for local review. It is not a public API or deployment package.
+Web to Markdown converts a public page into editable Markdown with a local web app or CLI. It renders JavaScript pages with Chromium, extracts readable articles where possible, and falls back to the page body when needed.
 
-## Verification
+## Highlights
 
-`npm run check` passes lint, formatting, and 24 tests. `npm audit --omit=dev` reports zero vulnerabilities. A live `brew.sh` CLI conversion produced 6,203 bytes, 827 words, and seven headings. The live web conversion reported the same seven headings, with seven outline items and seven Preview headings. The screenshots show the final desktop and mobile UI. Bundled Marked and DOMPurify notices are in `public/vendor`.
+- Edit, Preview, and Split views with live statistics, outline navigation, and Copy section.
+- Open UTF-8 Markdown files locally, copy edits, and save `.md` files.
+- CLI output to stdout or a new file, with front matter, image, and link options.
+- Bounded public URL fetching, sanitized Preview, and Chromium fixture and UI checks.
 
-## Remaining limitations
+## Run locally
 
-Conversion depends on a public page loading within resource and time limits. Article extraction is heuristic. Scripts, data requests, blocked assets, and late hydration can affect content. Preview does not load remote images. The browser download fallback marks the editor saved once the download is initiated; the user should confirm the file appears in their downloads.
+Requires Node.js 22.13+, 24, or 26.
 
-Review the source changes, samples, screenshots, and limitations before deciding whether to commit and tag. No publishing or repository settings changes are included here.
+```sh
+git clone https://github.com/DenGian/web-to-markdown.git
+cd web-to-markdown
+npm ci
+npm run install:browser
+npm start
+```
+
+Open <http://localhost:3000>, or run `node src/cli.js https://brew.sh/ --output homebrew.md`.
+
+## Limitations
+
+One public page is converted at a time. Article extraction is heuristic; body fallback can include navigation and lists can nest headings. Late content, blocked resources, site restrictions, and conversion limits can affect the result. Preview represents remote images as placeholders. No hosted app or API is provided.
